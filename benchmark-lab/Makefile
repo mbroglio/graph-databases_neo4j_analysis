@@ -30,8 +30,8 @@ generate-data:
 
 build:
 	@echo "Building optimized databases for SF$(SCALE_FACTOR)..."
-	chmod +x build-databases.sh
-	SCALE_FACTOR=$(SCALE_FACTOR) ./build-databases.sh
+	chmod +x build-databases.sh || true
+	SCALE_FACTOR=$(SCALE_FACTOR) bash ./build-databases.sh
 
 up:
 	@echo "Starting databases in background (SF$(SCALE_FACTOR))..."
