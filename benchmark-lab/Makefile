@@ -9,7 +9,7 @@ LAB_DATA_DIR = data
 setup:
 	@echo "Installing system dependencies..."
 	sudo apt update && sudo apt install -y docker.io git python3 python3-pip
-	pip3 install psycopg psycopg-binary pandas
+	sudo apt install -y python3-psycopg python3-pandas
 	sudo systemctl enable --now docker
 	sudo usermod -aG docker $$USER
 	@if [ ! -d "ldbc_snb_interactive_impls" ]; then \
@@ -30,6 +30,7 @@ generate-data:
 
 build:
 	@echo "Building optimized databases for SF$(SCALE_FACTOR)..."
+	chmod +x build-databases.sh
 	SCALE_FACTOR=$(SCALE_FACTOR) ./build-databases.sh
 
 up:
