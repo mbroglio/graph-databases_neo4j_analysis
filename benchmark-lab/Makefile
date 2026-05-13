@@ -8,8 +8,9 @@ LAB_DATA_DIR = data
 
 setup:
 	@echo "Installing system dependencies..."
-	sudo apt update && sudo apt install -y docker.io git python3 python3-pip
-	sudo apt install -y python3-psycopg python3-pandas
+	sudo apt update && sudo apt install -y docker.io docker-compose-v2 git python3 python3-pip
+	sudo apt install -y python3-pandas
+	pip3 install --user psycopg || pip3 install --user psycopg --break-system-packages
 	sudo systemctl enable --now docker
 	sudo usermod -aG docker $$USER
 	@if [ ! -d "ldbc_snb_interactive_impls" ]; then \
