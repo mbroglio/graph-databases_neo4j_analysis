@@ -24,9 +24,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_PASSWORD=password
+      - POSTGRES_PASSWORD=mysecretpassword
       - POSTGRES_USER=postgres
-      - POSTGRES_DB=ldbcsf01
+      - POSTGRES_DB=ldbcsnb
     volumes:
       - ./data/postgres-sf${SCALE_FACTOR:-0.1}:/var/lib/postgresql/data
     deploy:

@@ -64,9 +64,9 @@ You can easily connect to both databases using a database tool like **DBeaver** 
 
 **To Benchmark PostgreSQL:**
 - **JDBC URL:** `jdbc:postgresql://localhost:5432/ldbcsf01`
-- **Database:** `ldbcsf01`
+- **Database:** `ldbcsnb`
 - **Username:** `postgres`
-- **Password:** `password`
+- **Password:** `mysecretpassword`
 
 ### Teardown & Clean (Usa e Getta)
 Once you are done benchmarking, ensure you tear down the environment to guarantee a clean slate for the next test.
