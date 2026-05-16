@@ -44,7 +44,9 @@ up:
 	done
 	@echo "\nApplying Neo4j constraints and indexes..."
 	cat neo4j_setup.cypher | docker exec -i neo4j-benchmark cypher-shell -u neo4j -p password
-	@echo "Neo4j schema applied successfully."
+	@echo "Populating 'id' properties from internal IDs..."
+	docker exec neo4j-benchmark cypher-shell -u neo4j -p password "MATCH (n) WHERE n.id IS NULL SET n.id = id(n);"
+	@echo "Neo4j schema and data properties applied successfully."
 
 down:
 	@echo "Stopping databases..."

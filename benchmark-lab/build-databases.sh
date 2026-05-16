@@ -20,7 +20,7 @@ mkdir -p "$POSTGRES_TARGET_DIR"
 echo "---------------------------------------------"
 echo "🔧 PHASE 1: PREPPING CSV HEADERS FOR NEO4J 🔧"
 echo "---------------------------------------------"
-python3 -c "
+python3 <<EOF
 import os, glob, subprocess
 raw_dir = '$RAW_DATA_DIR'
 for filepath in glob.glob(raw_dir + '/**/*.csv', recursive=True):
@@ -34,21 +34,24 @@ for filepath in glob.glob(raw_dir + '/**/*.csv', recursive=True):
     is_edge = '_' in folder_name
     
     start_found = False
-    for i, h in enumerate(headers):
-        if not is_edge and h.lower() == 'id':
-            headers[i] = ':ID'
-        elif is_edge and h.endswith('Id'):
+    new_headers = []
+    for h in headers:
+        if not is_edge and (h.lower() == "id" or h == ":ID" or h.startswith(":ID(")):
+            new_headers.append(":ID")
+        elif is_edge and (h.endswith("Id") or h in [":START_ID", ":END_ID"] or h.startswith(":START_ID(") or h.startswith(":END_ID(")):
             if not start_found:
-                headers[i] = ':START_ID'
+                new_headers.append(":START_ID")
                 start_found = True
             else:
-                headers[i] = ':END_ID'
-                
-    new_header = '|'.join(headers)
+                new_headers.append(":END_ID")
+        else:
+            new_headers.append(h)
+    
+    new_header = "|".join(new_headers)
     if first_line != new_header:
         # Uses Linux native tools to replace the header with zero memory overhead
         subprocess.run(['sed', '-i', f'1s/.*/{new_header}/', filepath])
-"
+EOF
 echo "Headers patched successfully!"
 
 echo "---------------------------------------------"
