@@ -7,6 +7,25 @@ pg_dir = os.environ.get('PG_CSV_DIR', './data/postgres-csv-formatted')
 def load(entity, sub):
     files = glob.glob(f"{raw_dir}/{sub}/{entity}/*.csv")
     if not files: return pd.DataFrame()
+    
+    # Read header from our saved headers folder
+    header_file = os.path.join(os.path.dirname(raw_dir), 'headers', f"{entity}-header.csv")
+    if os.path.exists(header_file):
+        with open(header_file, 'r') as f:
+            header = f.readline().strip().split('|')
+        df = pd.concat([pd.read_csv(f, sep='|', low_memory=False, names=header) for f in files])
+        
+        # Clean column names for processing (remove (Group) parts)
+        rename_map = {}
+        for h in header:
+            clean = h
+            if h.startswith(':ID('): clean = ':ID'
+            elif h.startswith(':START_ID('): clean = ':START_ID'
+            elif h.startswith(':END_ID('): clean = ':END_ID'
+            rename_map[h] = clean
+        df = df.rename(columns=rename_map)
+        return df
+    
     return pd.concat([pd.read_csv(f, sep='|', low_memory=False) for f in files])
 
 def save(df, name, sub):

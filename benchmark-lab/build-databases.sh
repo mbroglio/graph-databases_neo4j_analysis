@@ -20,46 +20,63 @@ mkdir -p "$POSTGRES_TARGET_DIR"
 echo "---------------------------------------------"
 echo "🔧 PHASE 1: PREPPING CSV HEADERS FOR NEO4J 🔧"
 echo "---------------------------------------------"
-python3 <<EOF
-import os, glob, subprocess
-raw_dir = '$RAW_DATA_DIR'
-for filepath in glob.glob(raw_dir + '/**/*.csv', recursive=True):
-    with open(filepath, 'r', encoding='utf-8') as f:
-        first_line = f.readline().strip()
-    
-    if not first_line: continue
-    
-    headers = first_line.split('|')
-    folder_name = os.path.basename(os.path.dirname(filepath))
-    is_edge = '_' in folder_name
-    
-    start_found = False
-    new_headers = []
-    for h in headers:
-        if not is_edge and (h.lower() == "id" or h == ":ID" or h.startswith(":ID(")):
-            new_headers.append(":ID")
-        elif is_edge and (h.endswith("Id") or h in [":START_ID", ":END_ID"] or h.startswith(":START_ID(") or h.startswith(":END_ID(")):
-            if not start_found:
-                new_headers.append(":START_ID")
-                start_found = True
-            else:
-                new_headers.append(":END_ID")
-        else:
-            new_headers.append(h)
-    
-    new_header = "|".join(new_headers)
-    if first_line != new_header:
-        # Uses Linux native tools to replace the header with zero memory overhead
-        subprocess.run(['sed', '-i', f'1s/.*/{new_header}/', filepath])
-EOF
+RAW_DATA_DIR="$RAW_DATA_DIR" python3 patch_headers.py
 echo "Headers patched successfully!"
 
 echo "---------------------------------------------"
 echo "🟩 PHASE 2: BUILDING NEO4J GRAPH STORE 🟩"
 echo "---------------------------------------------"
+# Header path on host
+HEADER_DIR_HOST="$(dirname "$RAW_DATA_DIR")/headers"
+
+# Build arguments for neo4j-admin import
+NODE_ARGS=""
+REL_ARGS=""
+
+# Use python to generate the arguments string to avoid shell escaping hell
+ARGS=$(python3 -c "
+import os
+raw_dir = '$RAW_DATA_DIR'
+header_dir = '/headers'
+import_dir = '/import'
+
+nodes = []
+rels = []
+
+for sub in ['dynamic', 'static']:
+    d = os.path.join(raw_dir, sub)
+    if not os.path.exists(d): continue
+    for name in os.listdir(d):
+        if '_' in name:
+            label = name.split('_')[1].upper() # Simplified label
+            if 'knows' in name.lower(): label = 'KNOWS'
+            elif 'likes' in name.lower(): label = 'LIKES'
+            elif 'hascreator' in name.lower(): label = 'HAS_CREATOR'
+            elif 'hastag' in name.lower(): label = 'HAS_TAG'
+            elif 'islocatedin' in name.lower(): label = 'IS_LOCATED_IN'
+            elif 'containerof' in name.lower(): label = 'CONTAINER_OF'
+            elif 'hasmember' in name.lower(): label = 'HAS_MEMBER'
+            elif 'hasmoderator' in name.lower(): label = 'HAS_MODERATOR'
+            elif 'hasinterest' in name.lower(): label = 'HAS_INTEREST'
+            elif 'studyat' in name.lower(): label = 'STUDY_AT'
+            elif 'workat' in name.lower(): label = 'WORK_AT'
+            elif 'replyof' in name.lower(): label = 'REPLY_OF'
+            elif 'ispartof' in name.lower(): label = 'IS_PART_OF'
+            elif 'hastype' in name.lower(): label = 'HAS_TYPE'
+            elif 'issubclassof' in name.lower(): label = 'IS_SUBCLASS_OF'
+            
+            rels.append(f'--relationships={label}={header_dir}/{name}-header.csv,{import_dir}/{sub}/{name}/.*\.csv')
+        else:
+            label = name
+            nodes.append(f'--nodes={label}={header_dir}/{name}-header.csv,{import_dir}/{sub}/{name}/.*\.csv')
+
+print(' '.join(nodes + rels))
+")
+
 docker run --rm \
   -v "$NEO4J_TARGET_DIR":/data \
   -v "$RAW_DATA_DIR":/import \
+  -v "$HEADER_DIR_HOST":/headers \
   -e NEO4J_server_memory_heap_max__size=1G \
   neo4j:5.20.0-community \
   neo4j-admin database import full neo4j \
@@ -70,19 +87,7 @@ docker run --rm \
   --skip-duplicate-nodes=true \
   --skip-bad-relationships=true \
   --bad-tolerance=10000000 \
-  --nodes=Person="/import/dynamic/Person/.*\.csv" \
-  --nodes=Post="/import/dynamic/Post/.*\.csv" \
-  --nodes=Comment="/import/dynamic/Comment/.*\.csv" \
-  --nodes=Forum="/import/dynamic/Forum/.*\.csv" \
-  --nodes=Tag="/import/static/Tag/.*\.csv" \
-  --nodes=TagClass="/import/static/TagClass/.*\.csv" \
-  --nodes=Organisation="/import/static/Organisation/.*\.csv" \
-  --nodes=Place="/import/static/Place/.*\.csv" \
-  --relationships=KNOWS="/import/dynamic/Person_knows_Person/.*\.csv" \
-  --relationships=LIKES="/import/dynamic/Person_likes_Post/.*\.csv" \
-  --relationships=HAS_CREATOR="/import/dynamic/Post_hasCreator_Person/.*\.csv" \
-  --relationships=HAS_TAG="/import/dynamic/Post_hasTag_Tag/.*\.csv" \
-  --relationships=IS_LOCATED_IN="/import/dynamic/Person_isLocatedIn_City/.*\.csv"
+  $ARGS
 
 echo "---------------------------------------------"
 echo "🐘 PHASE 3: BUILDING POSTGRESQL STORE 🐘"
