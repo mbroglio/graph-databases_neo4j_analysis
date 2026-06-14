@@ -8,24 +8,24 @@
     "isolation_ok": true,
     "read_latency": {
       "n": 960,
-      "mean_ms": 2.461,
-      "median_ms": 1.329,
-      "stdev_ms": 8.95,
-      "p90_ms": 3.054,
+      "mean_ms": 2.372,
+      "median_ms": 1.574,
+      "stdev_ms": 5.274,
+      "p90_ms": 3.071,
       "min_ms": 0.555,
-      "max_ms": 120.6
+      "max_ms": 64.878
     },
     "write_latency": {
       "n": 480,
-      "mean_ms": 264.767,
-      "median_ms": 213.194,
-      "stdev_ms": 163.804,
-      "p90_ms": 498.392,
-      "min_ms": 57.713,
-      "max_ms": 972.34
+      "mean_ms": 276.932,
+      "median_ms": 212.014,
+      "stdev_ms": 183.156,
+      "p90_ms": 512.808,
+      "min_ms": 58.819,
+      "max_ms": 1056.122
     },
     "write_latency_note": "INCLUDE sleep deliberato di 50-100ms (finestra Dirty Read). Latenza netta stimata = write_latency.mean_ms - 75ms.",
-    "net_write_latency_ms": 189.767
+    "net_write_latency_ms": 201.932
   },
   "lost_update": {
     "target_id": 6597069766846,
@@ -116,16 +116,36 @@
     "rollback_confirmed": 30,
     "detection_time_ms": {
       "n": 30,
-      "mean_ms": 33.363,
-      "median_ms": 26.812,
-      "stdev_ms": 21.277,
-      "p90_ms": 66.909,
-      "min_ms": 12.733,
-      "max_ms": 83.463
+      "mean_ms": 34.557,
+      "median_ms": 31.187,
+      "stdev_ms": 20.855,
+      "p90_ms": 66.772,
+      "min_ms": 12.349,
+      "max_ms": 82.691
+    }
+  },
+  "non_repeatable_read": {
+    "vulnerable": {
+      "anomalies": 30,
+      "trials": 30
+    },
+    "protected": {
+      "anomalies": 0,
+      "trials": 30
+    }
+  },
+  "phantom_read": {
+    "vulnerable": {
+      "anomalies": 30,
+      "trials": 30
+    },
+    "protected": {
+      "anomalies": 30,
+      "trials": 30
     }
   },
   "metadata": {
-    "timestamp": "2026-06-13T11:37:13.988917",
+    "timestamp": "2026-06-14T15:04:30.238057",
     "scale_factor": "1",
     "n_runs": 30,
     "n_warmup": 20,

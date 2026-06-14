@@ -97,6 +97,7 @@ scenario2: wait-db
 	@echo "  Scenario 2: Transazioni e Concorrenza"
 	@echo "========================================================"
 	python3 scenario2/scenario2_benchmark.py
+	python3 scenario2/scenario2_wal.py
 	./archive_results.sh scenario2
 
 # ---------------------------------------------------------------------------
@@ -125,7 +126,6 @@ scenario4: wait-db
 	@echo "  Scenario 4: I Punti Deboli di Neo4j"
 	@echo "========================================================"
 	python3 scenario4/scenario4_benchmark.py
-	python3 scenario4/plot_scenario4.py
 	./archive_results.sh scenario4
 
 # ---------------------------------------------------------------------------

@@ -58,24 +58,24 @@ except ImportError:
 # Stile comune dark-mode
 # ---------------------------------------------------------------------------
 STYLE = {
-    "figure.facecolor":  "#1a1a2e",
-    "axes.facecolor":    "#16213e",
-    "axes.edgecolor":    "#4a4e69",
-    "axes.labelcolor":   "#e0e0e0",
-    "xtick.color":       "#b0b0b0",
-    "ytick.color":       "#b0b0b0",
-    "text.color":        "#e0e0e0",
-    "grid.color":        "#2a2a4a",
+    "figure.facecolor":  "#ffffff",
+    "axes.facecolor":    "#ffffff",
+    "axes.edgecolor":    "#333333",
+    "axes.labelcolor":   "#333333",
+    "xtick.color":       "#333333",
+    "ytick.color":       "#333333",
+    "text.color":        "#333333",
+    "grid.color":        "#e0e0e0",
     "grid.linestyle":    "--",
     "grid.linewidth":    0.6,
-    "legend.facecolor":  "#16213e",
-    "legend.edgecolor":  "#4a4e69",
+    "legend.facecolor":  "#ffffff",
+    "legend.edgecolor":  "#cccccc",
     "font.family":       "DejaVu Sans",
 }
 
-COLOR_NEO4J = "#f39c12"   # arancio – Neo4j
-COLOR_PG    = "#4a9eff"   # blu     – PostgreSQL
-COLOR_SPEEDUP = "#2ecc71" # verde   – speedup
+COLOR_NEO4J = "#27ae60"   # arancio – Neo4j
+COLOR_PG = "#2980b9"   # blu     – PostgreSQL
+COLOR_SPEEDUP = "#8e44ad" # verde   – speedup
 
 
 def load_results(path: str) -> dict:
@@ -111,30 +111,13 @@ def plot_multihop(results: dict, out_dir: str):
             hops, neo4j_means, yerr=neo4j_errs,
             marker="o", label="Neo4j", color=COLOR_NEO4J,
             linewidth=2.5, markersize=9, capsize=6, capthick=2,
-            elinewidth=1.5, ecolor="#f39c1288", zorder=4
+            elinewidth=1.5, ecolor="#555555", zorder=4
         )
         ax.errorbar(
             hops, pg_means, yerr=pg_errs,
             marker="s", label="PostgreSQL (CTE ricorsiva)", color=COLOR_PG,
             linewidth=2.5, markersize=9, capsize=6, capthick=2,
-            elinewidth=1.5, ecolor="#4a9eff88", zorder=4
-        )
-
-        # ---- Linea verticale per il punto di CROSSOVER (tra 2 e 3 hop) ----
-        # A sinistra del crossover PostgreSQL è più veloce (lookup indicizzato),
-        # a destra Neo4j domina (Index-Free Adjacency).
-        crossover_x = 2.5
-        ax.axvline(x=crossover_x, color="#e74c3c", linewidth=1.8,
-                   linestyle=":", alpha=0.85, zorder=3)
-        ax.annotate(
-            "← PG più veloce  |  Neo4j domina →\n(punto di crossover)",
-            xy=(crossover_x, 0),
-            xytext=(crossover_x, 0),
-            xycoords=("data", "axes fraction"),
-            textcoords=("data", "axes fraction"),
-            annotation_clip=False,
-            fontsize=8, color="#e74c3c", ha="center", va="bottom",
-            fontweight="bold",
+            elinewidth=1.5, ecolor="#555555", zorder=4
         )
 
         # Annotazioni speedup sui punti 3 e 4 hop
@@ -154,21 +137,13 @@ def plot_multihop(results: dict, out_dir: str):
         ax.set_xticks(hops)
         ax.set_xticklabels([f"{h} Hop" for h in hops], fontsize=11)
         ax.set_xlabel("Profondità di Navigazione", fontsize=12)
-        ax.set_ylabel("Latenza Media (ms) – scala logaritmica", fontsize=12)
+        ax.set_ylabel("Latenza (ms)", fontsize=12)
         ax.set_title(
-            "Query Multi-Hop: Neo4j vs PostgreSQL\n"
-            "Barre di errore = ±1σ (deviazione standard)",
-            fontsize=13, fontweight="bold", color="#ffffff", pad=14
+            "Latenza Multi-Hop",
+            fontsize=13, fontweight="bold", color="#333333", pad=14
         )
         ax.legend(fontsize=11)
         ax.grid(True, which="both", alpha=0.3)
-
-        # Nota metodologica P90/GC
-        fig.text(
-            0.02, 0.01,
-            "Nota: Il P90 di Neo4j è più alto della mediana per via dei cicli GC della JVM (Stop-The-World pause) – fisiologico.",
-            fontsize=7, color="#888888", ha="left"
-        )
 
         fig.tight_layout()
         out_path = os.path.join(out_dir, "multihop_plot.svg")
@@ -198,11 +173,11 @@ def plot_multihop_speedup(results: dict, out_dir: str):
         bars = ax.bar(
             [f"{h} Hop" for h in hops], speedups,
             color=[COLOR_SPEEDUP if s >= 1 else "#e74c3c" for s in speedups],
-            alpha=0.85, edgecolor="#ffffff22", width=0.55, zorder=3
+            alpha=0.85, edgecolor="#333333", width=0.55, zorder=3
         )
 
         # Linea di parità (speedup = 1)
-        ax.axhline(y=1, color="#e0e0e0", linewidth=1.2, linestyle="--",
+        ax.axhline(y=1, color="#333333", linewidth=1.2, linestyle="--",
                    label="Parità (1×)", zorder=2)
 
         for bar, sp in zip(bars, speedups):
@@ -211,14 +186,13 @@ def plot_multihop_speedup(results: dict, out_dir: str):
                 bar.get_x() + bar.get_width() / 2,
                 bar.get_height() + max(speedups) * 0.02,
                 label, ha="center", va="bottom", fontsize=11,
-                fontweight="bold", color="#ffffff"
+                fontweight="bold", color="#333333"
             )
 
-        ax.set_ylabel("Speedup Neo4j vs PostgreSQL", fontsize=12)
+        ax.set_ylabel("Speedup", fontsize=12)
         ax.set_title(
-            "Speedup Neo4j vs PostgreSQL – Query Multi-Hop\n"
-            "(valori > 1× = Neo4j più veloce; < 1× = PostgreSQL più veloce)",
-            fontsize=12, fontweight="bold", color="#ffffff", pad=14
+            "Speedup Multi-Hop",
+            fontsize=13, fontweight="bold", color="#333333", pad=14
         )
         ax.legend(fontsize=10)
         ax.grid(axis="y", alpha=0.3, zorder=0)
@@ -274,17 +248,17 @@ def plot_triangles(results: dict, out_dir: str):
 
         bars1 = ax.bar(x - width / 2, neo4j_means, width,
                        label="Neo4j (OLTP Cypher)", color=COLOR_NEO4J,
-                       alpha=0.85, edgecolor="#ffffff22", zorder=3)
+                       alpha=0.85, edgecolor="#333333", zorder=3)
         bars2 = ax.bar(x + width / 2, pg_means, width,
                        label="PostgreSQL (Triple Self-Join)", color=COLOR_PG,
-                       alpha=0.85, edgecolor="#ffffff22", zorder=3)
+                       alpha=0.85, edgecolor="#333333", zorder=3)
 
         # Error bars
         ax.errorbar(x - width / 2, neo4j_means, yerr=neo4j_errs,
-                    fmt="none", color="#e0e0e0", capsize=6, capthick=1.5,
+                    fmt="none", color="#333333", capsize=6, capthick=1.5,
                     linewidth=1.5, zorder=5)
         ax.errorbar(x + width / 2, pg_means, yerr=pg_errs,
-                    fmt="none", color="#e0e0e0", capsize=6, capthick=1.5,
+                    fmt="none", color="#333333", capsize=6, capthick=1.5,
                     linewidth=1.5, zorder=5)
 
         # Annotazioni valori
@@ -292,31 +266,23 @@ def plot_triangles(results: dict, out_dir: str):
             ax.text(bar.get_x() + bar.get_width() / 2,
                     bar.get_height() + max(neo4j_means + pg_means) * 0.02,
                     f"{mean:.1f} ms", ha="center", va="bottom",
-                    fontsize=9, fontweight="bold", color="#ffffff")
+                    fontsize=9, fontweight="bold", color="#333333")
         for bar, mean in zip(bars2, pg_means):
             ax.text(bar.get_x() + bar.get_width() / 2,
                     bar.get_height() + max(neo4j_means + pg_means) * 0.02,
                     f"{mean:.1f} ms", ha="center", va="bottom",
-                    fontsize=9, fontweight="bold", color="#ffffff")
+                    fontsize=9, fontweight="bold", color="#333333")
 
-        ax.set_ylabel("Latenza Media (ms)", fontsize=12)
+        ax.set_ylabel("Latenza (ms)", fontsize=12)
         ax.set_title(
-            "Triangle Detection: Neo4j (OLTP) vs PostgreSQL\n"
-            "Barre di errore = ±1σ",
-            fontsize=13, fontweight="bold", color="#ffffff", pad=14
+            "Triangle Detection",
+            fontsize=13, fontweight="bold", color="#333333", pad=14
         )
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=11)
         ax.legend(fontsize=10)
         ax.grid(axis="y", alpha=0.3, zorder=0)
         ax.set_axisbelow(True)
-
-        # Nota metodologica GDS
-        fig.text(
-            0.02, 0.01,
-            "Nota: Neo4j perde sulla query globale OLTP – in produzione si usa GDS (gds.triangleCount) che supera PostgreSQL.",
-            fontsize=7, color="#888888", ha="left"
-        )
 
         fig.tight_layout()
         out_path = os.path.join(out_dir, "triangle_plot.svg")
@@ -362,21 +328,21 @@ def plot_shortest_path(results: dict, out_dir: str):
         # Neo4j bars (always valid)
         bars1 = ax.bar(x - width / 2, neo4j_m, width,
                        label="Neo4j (BFS nativo)", color=COLOR_NEO4J,
-                       alpha=0.85, edgecolor="#ffffff22", zorder=3)
+                       alpha=0.85, edgecolor="#333333", zorder=3)
         ax.errorbar(x - width / 2, neo4j_m, yerr=neo4j_e,
-                    fmt="none", color="#e0e0e0", capsize=5, capthick=1.5,
+                    fmt="none", color="#333333", capsize=5, capthick=1.5,
                     linewidth=1.2, zorder=5)
 
         # PostgreSQL bars (con timeout handling)
         pg_valid_m = [m if m is not None else 0 for m in pg_m]
         bars2 = ax.bar(x + width / 2, pg_valid_m, width,
                        label="PostgreSQL (CTE ricorsiva)", color=COLOR_PG,
-                       alpha=0.85, edgecolor="#ffffff22", zorder=3)
+                       alpha=0.85, edgecolor="#333333", zorder=3)
         # Error bars solo dove non timeout
         for i, (xi, m, e, to) in enumerate(zip(x, pg_m, pg_e, pg_timeout)):
             if not to and m is not None:
                 ax.errorbar(xi + width / 2, m, yerr=e,
-                            fmt="none", color="#e0e0e0", capsize=5, capthick=1.5,
+                            fmt="none", color="#333333", capsize=5, capthick=1.5,
                             linewidth=1.2, zorder=5)
             elif to:
                 ax.text(xi + width / 2, max(neo4j_m) * 0.1,
@@ -389,13 +355,12 @@ def plot_shortest_path(results: dict, out_dir: str):
             ax.text(bar.get_x() + bar.get_width() / 2,
                     m + max(neo4j_m) * 0.02,
                     f"{m:.1f}ms", ha="center", va="bottom",
-                    fontsize=8, color="#ffffff")
+                    fontsize=8, color="#333333")
 
-        ax.set_ylabel("Latenza Media (ms)", fontsize=12)
+        ax.set_ylabel("Latenza (ms)", fontsize=12)
         ax.set_title(
-            "Pathfinding: Neo4j (shortestPath) vs PostgreSQL (CTE BFS)\n"
-            "Barre di errore = ±1σ  |  TIMEOUT = PostgreSQL supera limite temporale",
-            fontsize=12, fontweight="bold", color="#ffffff", pad=14
+            "Latenza Shortest Path",
+            fontsize=13, fontweight="bold", color="#333333", pad=14
         )
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=11)
@@ -436,13 +401,9 @@ def main():
     print(f"[*] Output directory: {out_dir}\n")
 
     plot_multihop(results, out_dir)
-    plot_multihop_speedup(results, out_dir)
-    plot_triangles(results, out_dir)
-    plot_shortest_path(results, out_dir)
 
     print("\n[*] Grafici generati:")
-    for name in ["multihop_plot.svg", "multihop_speedup_plot.svg",
-                 "triangle_plot.svg", "shortest_path_plot.svg"]:
+    for name in ["multihop_plot.svg"]:
         path = os.path.join(out_dir, name)
         if os.path.exists(path):
             size_kb = os.path.getsize(path) / 1024

@@ -680,6 +680,159 @@ def run_deadlock_test(driver, target_ids: list[int]) -> dict:
 
 
 # ===========================================================================
+# TEST 2.4 – NON-REPEATABLE READ
+# ===========================================================================
+
+def nrr_reader_vulnerable(driver, target_id, barrier, results_list, idx):
+    barrier.wait()
+    try:
+        with driver.session() as s:
+            tx = s.begin_transaction()
+            res1 = tx.run("MATCH (p:Person {id: $pid}) RETURN p.notification_count AS val", pid=target_id).single()
+            val1 = res1["val"] if res1 else 0
+            time.sleep(0.1)
+            res2 = tx.run("MATCH (p:Person {id: $pid}) RETURN p.notification_count AS val", pid=target_id).single()
+            val2 = res2["val"] if res2 else 0
+            tx.commit()
+            results_list[idx] = {"val1": val1, "val2": val2, "anomaly": val1 != val2}
+    except Exception as e:
+        results_list[idx] = {"error": str(e), "anomaly": False}
+
+def nrr_reader_protected(driver, target_id, barrier, results_list, idx):
+    barrier.wait()
+    try:
+        with driver.session() as s:
+            tx = s.begin_transaction()
+            tx.run("MATCH (p:Person {id: $pid}) SET p._dummy_ = true", pid=target_id).consume()
+            res1 = tx.run("MATCH (p:Person {id: $pid}) RETURN p.notification_count AS val", pid=target_id).single()
+            val1 = res1["val"] if res1 else 0
+            time.sleep(0.1)
+            res2 = tx.run("MATCH (p:Person {id: $pid}) RETURN p.notification_count AS val", pid=target_id).single()
+            val2 = res2["val"] if res2 else 0
+            tx.run("MATCH (p:Person {id: $pid}) REMOVE p._dummy_", pid=target_id).consume()
+            tx.commit()
+            results_list[idx] = {"val1": val1, "val2": val2, "anomaly": val1 != val2}
+    except Exception as e:
+        results_list[idx] = {"error": str(e), "anomaly": False}
+
+def nrr_writer(driver, target_id, barrier, new_val):
+    barrier.wait()
+    time.sleep(0.02)
+    try:
+        with driver.session() as s:
+            s.run("MATCH (p:Person {id: $pid}) SET p.notification_count = $val", pid=target_id, val=new_val)
+    except Exception:
+        pass
+
+def run_non_repeatable_read_test(driver, target_ids) -> dict:
+    banner("TEST 2.4 – Non-Repeatable Read (Explicit Lock)")
+    target_id = target_ids[2] if len(target_ids) > 2 else target_ids[0]
+    
+    def run_phase(strategy_name, reader_func):
+        sub_banner(f"2.4 – Strategia: {strategy_name}")
+        anomalies = 0
+        for trial in range(N_RUNS):
+            reset_notification_count(driver, [target_id], value=0)
+            barrier = threading.Barrier(2)
+            results_list = [None]
+            t_r = threading.Thread(target=reader_func, args=(driver, target_id, barrier, results_list, 0))
+            t_w = threading.Thread(target=nrr_writer, args=(driver, target_id, barrier, trial + 1))
+            t_r.start(); t_w.start()
+            t_r.join(); t_w.join()
+            res = results_list[0]
+            if res and res.get("anomaly"):
+                anomalies += 1
+            print(f"  Trial {trial+1:2d}: val1={res.get('val1')} val2={res.get('val2')} -> {'❌ Anomalia' if res and res.get('anomaly') else '✅ OK'}")
+        print(f"  Anomalie totali ({strategy_name}): {anomalies}/{N_RUNS}")
+        return {"anomalies": anomalies, "trials": N_RUNS}
+
+    res_vuln = run_phase("Vulnerabile (Read Committed)", nrr_reader_vulnerable)
+    res_prot = run_phase("Protetto (Explicit Lock)", nrr_reader_protected)
+    
+    return {"non_repeatable_read": {"vulnerable": res_vuln, "protected": res_prot}}
+
+# ===========================================================================
+# TEST 2.5 – PHANTOM READ
+# ===========================================================================
+
+def pr_reader_vulnerable(driver, target_id, barrier, results_list, idx):
+    barrier.wait()
+    try:
+        with driver.session() as s:
+            tx = s.begin_transaction()
+            res1 = tx.run("MATCH (p:Person {id: $pid})-[:KNOWS]->(f) RETURN count(f) AS c", pid=target_id).single()
+            c1 = res1["c"] if res1 else 0
+            time.sleep(0.1)
+            res2 = tx.run("MATCH (p:Person {id: $pid})-[:KNOWS]->(f) RETURN count(f) AS c", pid=target_id).single()
+            c2 = res2["c"] if res2 else 0
+            tx.commit()
+            results_list[idx] = {"c1": c1, "c2": c2, "anomaly": c1 != c2}
+    except Exception as e:
+        results_list[idx] = {"error": str(e), "anomaly": False}
+
+def pr_reader_protected(driver, target_id, barrier, results_list, idx):
+    barrier.wait()
+    try:
+        with driver.session() as s:
+            tx = s.begin_transaction()
+            tx.run("MATCH (p:Person {id: $pid}) SET p._dummy_ = true", pid=target_id).consume()
+            res1 = tx.run("MATCH (p:Person {id: $pid})-[:KNOWS]->(f) RETURN count(f) AS c", pid=target_id).single()
+            c1 = res1["c"] if res1 else 0
+            time.sleep(0.1)
+            res2 = tx.run("MATCH (p:Person {id: $pid})-[:KNOWS]->(f) RETURN count(f) AS c", pid=target_id).single()
+            c2 = res2["c"] if res2 else 0
+            tx.run("MATCH (p:Person {id: $pid}) REMOVE p._dummy_", pid=target_id).consume()
+            tx.commit()
+            results_list[idx] = {"c1": c1, "c2": c2, "anomaly": c1 != c2}
+    except Exception as e:
+        results_list[idx] = {"error": str(e), "anomaly": False}
+
+def pr_writer(driver, target_id, barrier, trial):
+    barrier.wait()
+    time.sleep(0.02)
+    try:
+        with driver.session() as s:
+            s.run("MATCH (p:Person {id: $pid}) CREATE (p)-[:KNOWS]->(:Person {id: $ph_id, _phantom_: true})", 
+                  pid=target_id, ph_id=-(trial*1000))
+    except Exception:
+        pass
+
+def run_phantom_read_test(driver, target_ids) -> dict:
+    banner("TEST 2.5 – Phantom Read (Explicit Lock)")
+    target_id = target_ids[3] if len(target_ids) > 3 else target_ids[0]
+    
+    def cleanup_phantoms():
+        with driver.session() as s:
+            s.run("MATCH (p:Person {_phantom_: true}) DETACH DELETE p")
+            
+    def run_phase(strategy_name, reader_func):
+        sub_banner(f"2.5 – Strategia: {strategy_name}")
+        anomalies = 0
+        for trial in range(N_RUNS):
+            cleanup_phantoms()
+            barrier = threading.Barrier(2)
+            results_list = [None]
+            t_r = threading.Thread(target=reader_func, args=(driver, target_id, barrier, results_list, 0))
+            t_w = threading.Thread(target=pr_writer, args=(driver, target_id, barrier, trial + 1))
+            t_r.start(); t_w.start()
+            t_r.join(); t_w.join()
+            try:
+                res = results_list[0]
+                if res and res.get("anomaly"):
+                    anomalies += 1
+                print(f"  Trial {trial+1:2d}: c1={res.get('c1')} c2={res.get('c2')} -> {'❌ Anomalia' if res and res.get('anomaly') else '✅ OK'}")
+            finally:
+                cleanup_phantoms()
+        print(f"  Anomalie totali ({strategy_name}): {anomalies}/{N_RUNS}")
+        return {"anomalies": anomalies, "trials": N_RUNS}
+
+    res_vuln = run_phase("Vulnerabile (Read Committed)", pr_reader_vulnerable)
+    res_prot = run_phase("Protetto (Explicit Lock)", pr_reader_protected)
+    
+    return {"phantom_read": {"vulnerable": res_vuln, "protected": res_prot}}
+
+
+# ===========================================================================
 # MAIN
 # ===========================================================================
 
@@ -743,6 +896,14 @@ def main():
     r23 = run_deadlock_test(driver, target_ids)
     all_results.update(r23)
 
+    # ---- TEST 2.4 ----
+    r24 = run_non_repeatable_read_test(driver, target_ids)
+    all_results.update(r24)
+
+    # ---- TEST 2.5 ----
+    r25 = run_phantom_read_test(driver, target_ids)
+    all_results.update(r25)
+
     # ---- RIEPILOGO FINALE ----
     banner("RIEPILOGO FINALE – Scenario 2")
 
@@ -775,6 +936,18 @@ def main():
     if det:
         print(f"  Tempo rilevazione medio : {det.get('mean_ms', 'N/A')} ms")
         print(f"  Tempo rilevazione P90   : {det.get('p90_ms', 'N/A')} ms")
+
+    print("\n[2.4] Non-Repeatable Read:")
+    nrr = all_results.get("non_repeatable_read", {})
+    if nrr:
+        print(f"  Vulnerabile (Read Comm.) : {nrr['vulnerable']['anomalies']}/{nrr['vulnerable']['trials']} anomalie")
+        print(f"  Protetto (Explicit Lock) : {nrr['protected']['anomalies']}/{nrr['protected']['trials']} anomalie")
+
+    print("\n[2.5] Phantom Read:")
+    pr = all_results.get("phantom_read", {})
+    if pr:
+        print(f"  Vulnerabile (Read Comm.) : {pr['vulnerable']['anomalies']}/{pr['vulnerable']['trials']} anomalie")
+        print(f"  Protetto (Explicit Lock) : {pr['protected']['anomalies']}/{pr['protected']['trials']} anomalie")
 
     # Pulizia: rimuovi notification_count dai nodi di test
     with driver.session() as s:

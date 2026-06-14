@@ -91,7 +91,7 @@ def run_queries():
         json_path = profiler.save(f"ram_results_{depth}hop.json")
         
         print("\nGenerazione del grafico...")
-        plot_ram_usage(json_path, output_dir, title=f"Costo Spaziale (RAM) - Query {depth} Hop - Scenario 1", filename=f"ram_chart_{depth}hop.svg")
+        plot_ram_usage(json_path, output_dir, title=f"Consumo RAM ({depth} Hop)", filename=f"ram_chart_{depth}hop.svg")
 
 if __name__ == "__main__":
     run_queries()

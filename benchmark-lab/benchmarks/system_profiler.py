@@ -165,24 +165,24 @@ def plot_ram_usage(
     # Stile dark-mode coerente con scenari 1, 2, 3, 4
     # ---------------------------------------------------------------------------
     DARK_STYLE = {
-        "figure.facecolor":  "#1a1a2e",
-        "axes.facecolor":    "#16213e",
-        "axes.edgecolor":    "#4a4e69",
-        "axes.labelcolor":   "#e0e0e0",
-        "xtick.color":       "#b0b0b0",
-        "ytick.color":       "#b0b0b0",
-        "text.color":        "#e0e0e0",
-        "grid.color":        "#2a2a4a",
-        "grid.linestyle":    "--",
-        "grid.linewidth":    0.6,
-        "legend.facecolor":  "#16213e",
-        "legend.edgecolor":  "#4a4e69",
-        "font.family":       "DejaVu Sans",
-    }
+    "figure.facecolor":  "#ffffff",
+    "axes.facecolor":    "#ffffff",
+    "axes.edgecolor":    "#333333",
+    "axes.labelcolor":   "#333333",
+    "xtick.color":       "#333333",
+    "ytick.color":       "#333333",
+    "text.color":        "#333333",
+    "grid.color":        "#e0e0e0",
+    "grid.linestyle":    "--",
+    "grid.linewidth":    0.6,
+    "legend.facecolor":  "#ffffff",
+    "legend.edgecolor":  "#cccccc",
+    "font.family":       "DejaVu Sans",
+}
 
-    COLOR_PG    = "#e74c3c"   # rosso  – PostgreSQL RAM
-    COLOR_N4J   = "#2ecc71"   # verde  – Neo4j RAM
-    COLOR_ANNOT = "#f39c12"   # arancio – annotazioni delta
+    COLOR_PG = "#2980b9"   # rosso  – PostgreSQL RAM
+    COLOR_N4J   = "#27ae60"   # verde  – Neo4j RAM
+    COLOR_ANNOT = "#c0392b"   # arancio – annotazioni delta
 
     with plt.rc_context(DARK_STYLE):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
@@ -207,7 +207,7 @@ def plot_ram_usage(
         delta_pg = stats[pg_key]["delta"]
         mid_t = (events.get("PG_start", ts[0]) + events.get("PG_end", ts[-1])) / 2
         ax1.annotate(
-            f"Δ = +{delta_pg:.2f} MB\n(allocazione dinamica CTE)",
+            f"Δ = +{delta_pg:.2f} MB",
             xy=(mid_t, pg_peak),
             xytext=(mid_t + (ts[-1] - ts[0]) * 0.05, pg_peak * 1.002),
             color=COLOR_ANNOT, fontsize=9, fontweight="bold",
@@ -215,8 +215,7 @@ def plot_ram_usage(
         )
 
         ax1.set_ylabel("RAM Allocata (MB)", fontsize=11)
-        ax1.set_title("PostgreSQL – Variazione RAM durante query 4-hop",
-                      fontsize=12, fontweight="bold")
+        ax1.set_title("PostgreSQL", fontsize=12, fontweight="bold")
         ax1.legend(loc="upper left", fontsize=10)
         ax1.grid(True, which="both", alpha=0.3)
         ax1.set_ylim(bottom=max(0, pg_base - 5), top=pg_peak + 8)
@@ -241,7 +240,7 @@ def plot_ram_usage(
         delta_n4j = stats[neo4j_key]["delta"]
         mid_t2 = (events.get("Neo4j_start", ts[0]) + events.get("Neo4j_end", ts[-1])) / 2
         ax2.annotate(
-            f"Δ = +{delta_n4j:.2f} MB\n(GC JVM – fisiologico)",
+            f"Δ = +{delta_n4j:.2f} MB",
             xy=(mid_t2, n4j_peak),
             xytext=(mid_t2 + (ts[-1] - ts[0]) * 0.05, n4j_peak + 5),
             color=COLOR_ANNOT, fontsize=9, fontweight="bold",
@@ -250,22 +249,10 @@ def plot_ram_usage(
 
         ax2.set_xlabel("Tempo (secondi)", fontsize=12)
         ax2.set_ylabel("RAM Allocata (MB)", fontsize=11)
-        ax2.set_title(
-            "Neo4j – Variazione RAM durante query 4-hop\n"
-            "(baseline ~5 GB = Heap JVM + Page Cache pre-allocati per configurazione)",
-            fontsize=12, fontweight="bold"
-        )
+        ax2.set_title("Neo4j", fontsize=12, fontweight="bold")
         ax2.legend(loc="upper left", fontsize=10)
         ax2.grid(True, which="both", alpha=0.3)
         ax2.set_ylim(bottom=n4j_base - 30, top=n4j_peak + 50)
-
-        # Footer nota metodologica
-        fig.text(
-            0.02, -0.01,
-            "Nota: i valori assoluti dei due pannelli NON sono confrontabili "
-            "(configurazioni di memoria eterogenee). La metrica rilevante è la sola variazione netta Δ.",
-            fontsize=8, color="#888888", ha="left"
-        )
 
         fig.suptitle(title, fontsize=13, fontweight="bold", y=1.01)
         plt.tight_layout()

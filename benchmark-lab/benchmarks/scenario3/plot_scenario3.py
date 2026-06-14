@@ -49,22 +49,22 @@ except ImportError:
 # Stile comune coerente con i plot degli scenari 1 e 2
 # ---------------------------------------------------------------------------
 STYLE = {
-    "figure.facecolor":  "#1a1a2e",
-    "axes.facecolor":    "#16213e",
-    "axes.edgecolor":    "#4a4e69",
-    "axes.labelcolor":   "#e0e0e0",
-    "xtick.color":       "#b0b0b0",
-    "ytick.color":       "#b0b0b0",
-    "text.color":        "#e0e0e0",
-    "grid.color":        "#2a2a4a",
+    "figure.facecolor":  "#ffffff",
+    "axes.facecolor":    "#ffffff",
+    "axes.edgecolor":    "#333333",
+    "axes.labelcolor":   "#333333",
+    "xtick.color":       "#333333",
+    "ytick.color":       "#333333",
+    "text.color":        "#333333",
+    "grid.color":        "#e0e0e0",
     "grid.linestyle":    "--",
     "grid.linewidth":    0.6,
-    "legend.facecolor":  "#16213e",
-    "legend.edgecolor":  "#4a4e69",
+    "legend.facecolor":  "#ffffff",
+    "legend.edgecolor":  "#cccccc",
     "font.family":       "DejaVu Sans",
 }
 
-COLOR_OK    = "#2ecc71"   # verde – scrittura riuscita
+COLOR_OK = "#27ae60"   # verde – scrittura riuscita
 COLOR_FAIL  = "#e74c3c"   # rosso – scrittura fallita
 COLOR_SHADE = "#c0392b"   # sfondo finestra downtime
 COLOR_BAR1  = "#4a9eff"   # blu – nodi primari
@@ -131,7 +131,7 @@ def plot_fault_tolerance_timeline(results: dict, out_dir: str):
         ax.set_ylabel("Latenza transazione (ms)", fontsize=11)
         ax.set_title(
             "Timeline Failover Raft",
-            fontsize=13, fontweight="bold", color="#ffffff", pad=12
+            fontsize=13, fontweight="bold", color="#333333", pad=12
         )
         ax.legend(loc="upper right", fontsize=9)
         ax.grid(True)
@@ -173,13 +173,13 @@ def plot_load_balancing(results: dict, out_dir: str):
 
         # -- Sottografico A: barre orizzontali (conteggio query) --
         ax1 = axes[0]
-        bars = ax1.barh(labels, counts, color=colors, alpha=0.85, edgecolor="#ffffff22")
+        bars = ax1.barh(labels, counts, color=colors, alpha=0.85, edgecolor="#333333")
         for bar, pct in zip(bars, pcts):
             ax1.text(
                 bar.get_width() + max(counts) * 0.01,
                 bar.get_y() + bar.get_height() / 2,
                 f"{pct:.1f}%",
-                va="center", ha="left", fontsize=9, color="#e0e0e0"
+                va="center", ha="left", fontsize=9, color="#333333"
             )
         ax1.set_xlabel("Query servite", fontsize=10)
         ax1.set_title("Load Balancing", fontsize=11,
@@ -194,13 +194,13 @@ def plot_load_balancing(results: dict, out_dir: str):
 
         # -- Sottografico B: latenza media per nodo --
         ax2 = axes[1]
-        bars2 = ax2.barh(labels, lats, color=colors, alpha=0.85, edgecolor="#ffffff22")
+        bars2 = ax2.barh(labels, lats, color=colors, alpha=0.85, edgecolor="#333333")
         for bar, lat in zip(bars2, lats):
             ax2.text(
                 bar.get_width() + max(lats) * 0.01,
                 bar.get_y() + bar.get_height() / 2,
                 f"{lat:.1f} ms",
-                va="center", ha="left", fontsize=9, color="#e0e0e0"
+                va="center", ha="left", fontsize=9, color="#333333"
             )
         ax2.set_xlabel("Latenza media (ms)", fontsize=10)
         ax2.set_title("Latenza di Lettura", fontsize=11,
@@ -240,10 +240,9 @@ def main():
     print(f"[*] Output directory: {out_dir}\n")
 
     plot_fault_tolerance_timeline(results, out_dir)
-    plot_load_balancing(results, out_dir)
 
     print("\n[*] Grafici generati:")
-    for name in ["fault_tolerance_timeline.svg", "load_balancing.svg"]:
+    for name in ["fault_tolerance_timeline.svg"]:
         path = os.path.join(out_dir, name)
         if os.path.exists(path):
             size_kb = os.path.getsize(path) / 1024
