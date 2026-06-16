@@ -13,10 +13,16 @@ NEO4J_USER = "neo4j"
 NEO4J_PASS = "password"
 PG_DSN = "dbname=ldbcsnb user=postgres password=mysecretpassword host=localhost port=5432"
 
-PID = 35184372088910
+# Nodo high_degree per SF1 (hop 4 -> >130s in Postgres)
+if len(sys.argv) != 3:
+    print("Usage: python ram_profiler.py <PID> <OUTPUT_DIR>")
+    sys.exit(1)
+
+PID = int(sys.argv[1])
+OUTPUT_DIR_NAME = sys.argv[2]
 
 def run_queries():
-    output_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), OUTPUT_DIR_NAME)
     
     print("Connecting to DBs...")
     pg_conn = psycopg2.connect(PG_DSN)
@@ -25,24 +31,49 @@ def run_queries():
     
     for depth in [4]:
         print(f"\n=======================================================")
-        print(f" Avvio profilazione per query a {depth} HOP")
+        print(f" WARMUP query a {depth} HOP (per evitare cold-start)")
+        print(f"=======================================================\n")
+        cur = pg_conn.cursor()
+        sql = """
+        WITH RECURSIVE friends(person_id, depth) AS (
+            SELECT k_person2id, 1
+            FROM knows
+            WHERE k_person1id = %(pid)s
+            UNION ALL
+            SELECT k.k_person2id, f.depth + 1
+            FROM knows k
+            JOIN friends f ON k.k_person1id = f.person_id
+            WHERE f.depth < %(depth)s
+        )
+        SELECT COUNT(DISTINCT person_id) FROM friends WHERE person_id != %(pid)s
+        """
+        cur.execute(sql, {"pid": PID, "depth": depth})
+        pg_result_warmup = cur.fetchone()[0]
+
+        with neo4j_driver.session() as s:
+            neo4j_result_warmup = s.run(
+                f"MATCH (p:Person {{id: $pid}})-[:KNOWS*1..{depth}]-(friend:Person) "
+                "RETURN count(DISTINCT friend)",
+                pid=PID
+            ).single()[0]
+        
+        print("Warmup completato. Attesa 5 secondi per permettere il rilascio RAM...")
+        time.sleep(5)
+
+        print(f"\n=======================================================")
+        print(f" Avvio profilazione vera e propria per query a {depth} HOP")
         print(f"=======================================================\n")
 
         profiler = DockerRAMProfiler(
             containers=["postgres-benchmark", "neo4j-benchmark"],
             output_dir=output_dir,
-            poll_interval=0.3
+            poll_interval=1.0 # poll_interval=1 per non avere troppi punti nei 130s
         )
         profiler.start()
         
         print("Baseline wait (3s)...")
         time.sleep(3)
         
-        # ---------------------------------------------------------------
-        # NOTA: La tabella `knows` è già bidirezionale (il loader LDBC
-        # inserisce sia (A,B) che (B,A)). Si naviga solo k_person1id →
-        # k_person2id per essere equivalenti al pattern Neo4j `-[:KNOWS]-`.
-        # ---------------------------------------------------------------
         print(f"Running PostgreSQL {depth}-hop query for PID {PID}...")
         profiler.mark_event("PG_start")
         cur = pg_conn.cursor()
@@ -91,7 +122,8 @@ def run_queries():
         json_path = profiler.save(f"ram_results_{depth}hop.json")
         
         print("\nGenerazione del grafico...")
-        plot_ram_usage(json_path, output_dir, title=f"Consumo RAM ({depth} Hop)", filename=f"ram_chart_{depth}hop.svg")
+        sf_label = "SF 1.0" if "SF1" in OUTPUT_DIR_NAME else "SF 0.1"
+        plot_ram_usage(json_path, output_dir, title=f"Consumo RAM ({depth} Hop) - {sf_label}", filename=f"ram_chart_{depth}hop.svg")
 
 if __name__ == "__main__":
     run_queries()

@@ -1,0 +1,29 @@
+{
+  "containers": [
+    "postgres-benchmark",
+    "neo4j-benchmark"
+  ],
+  "timestamps": [
+    2.040029287338257,
+    5.068702459335327,
+    8.09771728515625
+  ],
+  "ram_data": {
+    "postgres-benchmark": [
+      74.29,
+      74.52,
+      74.19
+    ],
+    "neo4j-benchmark": [
+      2063.36,
+      2063.36,
+      2064.384
+    ]
+  },
+  "events": {
+    "PG_start": 3.000555992126465,
+    "PG_end": 3.002495288848877,
+    "Neo4j_start": 6.002846002578735,
+    "Neo4j_end": 6.02309513092041
+  }
+}
