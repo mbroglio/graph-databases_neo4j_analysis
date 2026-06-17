@@ -4,7 +4,7 @@ import threading, time
 driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
 
 target_id = 933
-# let's assume target_id=933 has some node in the DB
+# Assunzione: il nodo con target_id = 933 esiste all'interno del database
 
 def reader():
     results = {}

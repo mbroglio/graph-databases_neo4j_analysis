@@ -1,33 +1,24 @@
-# =============================================================================
-# infrastructure/Makefile – Gestione dataset e container
-# =============================================================================
+# Makefile per l'infrastruttura (gestione del ciclo di vita dei database)
 #
-# UTILIZZO (dalla cartella infrastructure/):
+# COME SI USA:
 #
-#   Generazione dati grezzi (CSV):
-#     make generate SF=0.1      – genera dataset SF 0.1 (~30s, ~500MB)
-#     make generate SF=1        – genera dataset SF 1   (~30min, ~3GB RAM)
+#   Per generare i file CSV con i dati:
+#     make generate SF=0.1      – genera i dati (SF=0.1)
+#     make generate SF=1        – genera i dati (SF=1)
 #
-#   Build database (importa CSV in Neo4j e PostgreSQL):
-#     make build SF=0.1         – carica SF 0.1 nei DB (prerequisito: generate)
-#     make build SF=1           – carica SF 1 nei DB   (prerequisito: generate)
+#   Per caricare i CSV dentro Neo4j e Postgres:
+#     make build SF=0.1         
+#     make build SF=1           
 #
-#   Avvio/stop container:
-#     make up SF=0.1            – avvia i container con il volume SF 0.1
-#     make up SF=1              – avvia i container con il volume SF 1
-#     make down                 – ferma e rimuove i container (mantiene i dati)
+#   Avvio/stop:
+#     make up SF=0.1            – avvia i container
+#     make down                 – termina i container
 #
-#   Scorciatoie:
-#     make reset SF=0.1         – down + build + up per SF 0.1  (ferma prima i container)
-#     make reset SF=1           – down + build + up per SF 1   (ferma prima i container)
+#   Combo utili:
+#     make reset SF=0.1         – fa down + build + up (per alternare tra i dataset)
 #
-#   Prima installazione:
-#     make setup                – installa dipendenze di sistema
-#
-# NOTA: generate genera i CSV grezzi (una volta sola per SF).
-#       build li importa nei volumi Docker (deve essere ripetuto se si cambia SF
-#       o se si eseguono deep-clean). up riavvia i container senza re-importare.
-# =============================================================================
+#   Inizializzazione ambiente:
+#     make setup                – per installare le dipendenze
 
 .PHONY: help setup generate build up down clean deep-clean reset
 
@@ -43,38 +34,23 @@ LAB_DATA_DIR  = data
 # ---------------------------------------------------------------------------
 help:
 	@echo ""
-	@echo "============================================================"
-	@echo "  infrastructure/Makefile – Gestione dataset e container"
-	@echo "============================================================"
+	@echo "--- Makefile per gestire i DB e i dati ---"
 	@echo ""
-	@echo "  make generate SF=0.1   Genera CSV grezzi per SF 0.1 (~500MB)"
-	@echo "  make generate SF=1     Genera CSV grezzi per SF 1   (~3GB, ~30min)"
+	@echo "  make generate SF=0.1   Genera CSV piccoli"
+	@echo "  make generate SF=1     Genera CSV (SF=1, richiede tempo)"
 	@echo ""
-	@echo "  make build SF=0.1      Importa SF 0.1 in Neo4j e PostgreSQL"
-	@echo "  make build SF=1        Importa SF 1 in Neo4j e PostgreSQL"
+	@echo "  make build SF=0.1      Importa SF 0.1 nei DB"
+	@echo "  make build SF=1        Importa SF 1 nei DB"
 	@echo ""
-	@echo "  make up SF=0.1         Avvia container con volume SF 0.1"
-	@echo "  make up SF=1           Avvia container con volume SF 1"
-	@echo "  make down              Ferma i container (mantiene i dati)"
+	@echo "  make up SF=0.1         Avvia i container"
+	@echo "  make down              Termina i container"
 	@echo ""
-	@echo "  make reset SF=0.1      Equivale a: down + build + up per SF 0.1"
-	@echo "  make reset SF=1        Equivale a: down + build + up per SF 1"
+	@echo "  make reset SF=0.1      Ricostruzione completa ambiente (down, build, up)"
 	@echo ""
-	@echo "  make setup             Installa dipendenze di sistema"
-	@echo ""
-	@echo "  Flusso prima esecuzione:"
-	@echo "    make setup"
-	@echo "    make generate SF=0.1"
-	@echo "    make generate SF=1      (opzionale, richiede ~30min)"
-	@echo "    make reset SF=1         (build + up con SF 1)"
-	@echo "    # → esegui scenari dal benchmarks/Makefile"
-	@echo "    make reset SF=0.1       (build + up con SF 0.1)"
-	@echo "    # → esegui di nuovo gli scenari"
+	@echo "  make setup             Installazione dipendenze di sistema"
 	@echo ""
 
-# ---------------------------------------------------------------------------
-# Setup – installazione dipendenze di sistema (una volta sola)
-# ---------------------------------------------------------------------------
+# Installazione iniziale per preparare la VM o il PC
 setup:
 	@echo "Installing system dependencies..."
 	sudo apt update && sudo apt install -y docker.io docker-compose-v2 git python3 python3-pip
@@ -87,11 +63,8 @@ setup:
 		git clone https://github.com/ldbc/ldbc_snb_interactive_impls.git; \
 	fi
 
-# ---------------------------------------------------------------------------
-# generate – generazione CSV grezzi LDBC SNB
-# I file vengono salvati in out-sf$(SF)/ e NON vengono sovrascritti se
-# la cartella esiste già. Cancella manualmente out-sf$(SF)/ per rigenerare.
-# ---------------------------------------------------------------------------
+# Generazione del dataset LDBC in formato CSV.
+# Omette la sovrascrittura se la directory esiste.
 generate:
 	@echo "============================================================"
 	@echo "  Generazione dataset SF $(SF)"
@@ -113,10 +86,8 @@ generate:
 		echo "[OK] Dataset SF $(SF) generato in $(PWD)/$(DATA_DIR)"; \
 	fi
 
-# ---------------------------------------------------------------------------
-# build – importa i CSV nei volumi Docker (Neo4j + PostgreSQL)
-# Prerequisito: make generate SF=$(SF) già completato
-# ---------------------------------------------------------------------------
+# Importazione dei CSV nei volumi Docker
+# (tramite script di caricamento batch)
 build:
 	@echo "============================================================"
 	@echo "  Build database SF $(SF)"
@@ -129,10 +100,8 @@ build:
 	chmod +x build-databases.sh
 	SCALE_FACTOR=$(SF) bash ./build-databases.sh
 
-# ---------------------------------------------------------------------------
-# up – avvia container single-instance con il volume dell'SF scelto
-# Ferma prima eventuali container già attivi (qualunque SF stessero usando).
-# ---------------------------------------------------------------------------
+# Avvio dei container tramite docker-compose
+# Esegue down preliminare per evitare conflitti di porta
 up:
 	@echo "============================================================"
 	@echo "  Avvio container SF $(SF)"
@@ -152,34 +121,24 @@ up:
 	@docker exec neo4j-benchmark cypher-shell -u neo4j -p password \
 		"MATCH (p:Person) RETURN count(p) AS n_persons;" 2>/dev/null
 
-# ---------------------------------------------------------------------------
-# down – ferma e rimuove i container (i dati nei volumi rimangono)
-# ---------------------------------------------------------------------------
+# Sospensione database con persistenza dati
 down:
 	@echo "Stopping databases..."
 	-SCALE_FACTOR=$(SF) docker compose -f docker-compose.yml down 2>/dev/null || true
 
-# ---------------------------------------------------------------------------
-# clean – down + rimozione dei volumi Docker (dati DB cancellati)
-# I CSV grezzi in out-sf$(SF)/ vengono mantenuti.
-# ---------------------------------------------------------------------------
+# Terminazione completa e rimozione dei volumi Docker
 clean: down
 	@echo "Removing Docker volumes for SF $(SF)..."
 	docker run --rm -v $(PWD):/app ubuntu rm -rf /app/$(LAB_DATA_DIR)
 	@echo "Done. I CSV grezzi in $(DATA_DIR)/ sono stati mantenuti."
 
-# ---------------------------------------------------------------------------
-# deep-clean – clean + cancellazione CSV grezzi
-# ---------------------------------------------------------------------------
+# Rimozione completa (include volumi e CSV generati)
 deep-clean: clean
 	@echo "Removing raw CSV data for SF $(SF)..."
 	docker run --rm -v $(PWD):/app ubuntu rm -rf /app/$(DATA_DIR)
 
-# ---------------------------------------------------------------------------
-# reset – down + build + up (workflow completo per cambiare SF)
-# Ferma prima tutti i container (libera la porta 5432), poi importa i CSV
-# e riavvia. I CSV grezzi devono esistere già (fai prima make generate SF=$(SF)).
-# ---------------------------------------------------------------------------
+# Ripristino completo dell'ambiente (down, build, up).
+# Consigliato per il cambio di Scale Factor.
 reset: down build up
 	@echo ""
 	@echo "============================================================"

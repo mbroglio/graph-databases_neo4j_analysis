@@ -1,32 +1,7 @@
 #!/usr/bin/env python3
 """
-=============================================================================
-SCENARIO 2: Transazioni e Concorrenza (Stress Test)
-=============================================================================
-Test suite che mette sotto sforzo la robustezza transazionale di Neo4j
-in ambienti multi-utente ad alta concorrenza:
-
-  2.1 - Gestione del Livello Read Committed
-        Verifica S-lock / X-lock e assenza di anomalie Dirty Read durante
-        letture analitiche e scritture concorrenti sullo stesso sotto-grafo.
-
-  2.2 - Simulazione del Lost Update
-        Race condition controllata con due thread concorrenti sullo stesso
-        nodo. Confronto tra strategia non-atomica (vulnerabile) e strategia
-        atomica Cypher (robusta).
-
-  2.3 - Deadlock Detection e Risoluzione
-        Scritture incrociate simmetriche che forzano un'attesa circolare.
-        Misurazione del tempo di reazione del Lock Manager di Neo4j
-        (Wait-for Graph) e verifica del rollback automatico via
-        TransientError.
-
-Metodologia:
-  - N_THREADS thread per la concorrenza
-  - N_RUNS ripetizioni per la raccolta di statistiche
-  - Warm-up iniziale per stabilizzare le connessioni
-  - Metriche: dirty_reads, lost_updates, deadlock_time_ms, ...
-=============================================================================
+Scenario 2: Transazioni e Concorrenza.
+Test su read committed, lost update e deadlock.
 """
 
 import time
@@ -62,8 +37,7 @@ N_RUNS        = 30   # ripetizioni per raccogliere statistiche
 N_WARMUP      = 20   # warm-up iniziale (necessario per JIT compilation JVM)
 N_THREADS     = 8    # thread concorrenti per i test di concorrenza
 LOST_UPDATE_THREADS = 10  # thread per il test Lost Update
-# NOTA: il test 2.3 spawna sempre 1 coppia di thread per run (non configurabile
-# via costante – ogni run è un ciclo deadlock completo)
+# Nota: l'esecuzione 2.3 genera una singola coppia di thread per iterazione
 
 # ---------------------------------------------------------------------------
 # Utility
@@ -117,17 +91,13 @@ def print_stats(label: str, stats: dict):
     print(f"    Max        : {stats['max_ms']:>10.3f} ms")
 
 
-# ===========================================================================
-# CONNESSIONE
-# ===========================================================================
+# Setup della connessione al DB
 
 def get_neo4j_driver():
     return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 
-# ===========================================================================
-# SETUP: crea nodi dedicati ai test di concorrenza
-# ===========================================================================
+# PREPARAZIONE DEI NODI (reset dello stato iniziale)
 
 CONCURRENCY_NODE_COUNT = 5   # nodi dedicati ai test 2.1 e 2.3
 TEST_PROP_NAME         = "notification_count"
@@ -161,9 +131,7 @@ def reset_notification_count(driver, person_ids: list[int], value: int = 0):
         )
 
 
-# ===========================================================================
-# TEST 2.1 – GESTIONE DEL LIVELLO READ COMMITTED
-# ===========================================================================
+# TEST 2.1 - READ COMMITTED
 
 def reader_task(driver, target_id: int, n_reads: int) -> dict:
     """
@@ -191,14 +159,12 @@ def reader_task(driver, target_id: int, n_reads: int) -> dict:
     return {"latencies": latencies, "values_read": values_read}
 
 
-# NOTA LATENZA SCRITTURA (importante per interpretare Tabella 4.5):
-# La latenza di scrittura registrata in questo test INCLUDE deliberatamente
+# Nota: Latenza di Scrittura
+# I tempi registrati includono deliberatamente
 # uno sleep di 50-100 ms (passo 3) che simula una transazione lunga.
-# Questo sleep è lo strumento con cui creiamo la "finestra di Dirty Read":
-# senza di esso i reader non avrebbero tempo di intercettare il valore non
-# committato. La latenza reale del motore Neo4j (escluso lo sleep) è pari
-# alla latenza_totale – sleep_ms, tipicamente nell'ordine dei 2-5 ms.
-# Il numero riportato in tabella (es. ~265 ms) comprende lo sleep intenzionale
+# Questa pausa induce artificialmente una finestra di concorrenza:
+# senza di essa i reader non avrebbero tempo di intercettare il valore non
+# committato. Il numero riportato in tabella comprende lo sleep intenzionale
 # e non è confrontabile con latenze di transazioni brevi.
 SLEEP_DIRTY_WINDOW_MS_MIN = 50   # ms di pausa minima nella transazione lunga
 SLEEP_DIRTY_WINDOW_MS_MAX = 100  # ms di pausa massima nella transazione lunga
@@ -219,8 +185,7 @@ def writer_task_explicit_tx(driver, target_id: int, n_writes: int,
     Se Neo4j rispettasse Read Committed, nessun reader vedrebbe `dirty_value`
     durante il passo 3. Un sistema senza isolamento mostrerebbe dirty_value.
 
-    NOTA: la latenza totale include lo sleep intenzionale (50-100ms).
-    Per ottenere la latenza netta del motore, sottrarre SLEEP_DIRTY_WINDOW_MS_MIN.
+    Nota: la latenza totale include una pausa intenzionale (50-100ms).
     """
     latencies = []
     errors = 0
@@ -356,9 +321,7 @@ def run_read_committed_test(driver, target_ids: list[int]) -> dict:
     return results
 
 
-# ===========================================================================
-# TEST 2.2 – SIMULAZIONE DEL LOST UPDATE
-# ===========================================================================
+# TEST 2.2 - LOST UPDATE (Race Condition)
 
 # ---------- Strategia NON ATOMICA (vulnerabile) ----------
 
@@ -517,9 +480,7 @@ def run_lost_update_test(driver, target_ids: list[int]) -> dict:
     return results
 
 
-# ===========================================================================
-# TEST 2.3 – DEADLOCK DETECTION E RISOLUZIONE
-# ===========================================================================
+# TEST 2.3 - DEADLOCK (Wait-for Graph)
 
 def deadlock_thread_v2(driver, first_id: int, second_id: int,
                        my_ready: threading.Event, other_ready: threading.Event,
@@ -679,9 +640,7 @@ def run_deadlock_test(driver, target_ids: list[int]) -> dict:
     return results
 
 
-# ===========================================================================
-# TEST 2.4 – NON-REPEATABLE READ
-# ===========================================================================
+# TEST 2.4 - NON-REPEATABLE READ
 
 def nrr_reader_vulnerable(driver, target_id, barrier, results_list, idx):
     barrier.wait()
@@ -751,9 +710,7 @@ def run_non_repeatable_read_test(driver, target_ids) -> dict:
     
     return {"non_repeatable_read": {"vulnerable": res_vuln, "protected": res_prot}}
 
-# ===========================================================================
-# TEST 2.5 – PHANTOM READ
-# ===========================================================================
+# TEST 2.5 - PHANTOM READ
 
 def pr_reader_vulnerable(driver, target_id, barrier, results_list, idx):
     barrier.wait()
@@ -834,8 +791,7 @@ def run_phantom_read_test(driver, target_ids) -> dict:
 
 # ===========================================================================
 # MAIN
-# ===========================================================================
-
+# ESECUZIONE PRINCIPALE
 def main():
     # Connessione preliminare per rilevare SF prima di stampare l'header
     try:

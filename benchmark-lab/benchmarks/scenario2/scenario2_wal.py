@@ -23,17 +23,17 @@ def test_wal():
     with driver.session() as s:
         s.run("MATCH (p:Person) REMOVE p.wal_test")
         
-    print("[1] Avvio transazione massiva (non committata)...")
+    print("[1] Avvio transazione massiva (non confermata)...")
     try:
         with driver.session() as s:
             tx = s.begin_transaction()
             tx.run("MATCH (p:Person) SET p.wal_test = 'in_progress'")
-            # Non facciamo il commit, simuliamo crash
-            print("[2] Esecuzione DOCKER KILL (crash brutale del server) durante transazione attiva...")
+            # Transazione mantenuta attiva, simulazione failure
+            print("[2] Esecuzione DOCKER KILL (simulazione crash del server) durante transazione attiva...")
             subprocess.run(["docker", "kill", "neo4j-benchmark"], check=True)
-            # aspetta che muoia
+            # Attesa spegnimento container
             time.sleep(2)
-            # non possiamo committare, il db è morto
+            # Impossibile eseguire commit a questo punto
     except Exception as e:
         print(f"  [!] Connessione interrotta attesa: {e}")
         

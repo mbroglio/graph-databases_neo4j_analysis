@@ -8,18 +8,10 @@ import matplotlib.ticker as ticker
 
 
 class DockerRAMProfiler:
-    """Monitor generico della RAM dei container Docker durante l'esecuzione di query.
+    """Script per profilare quanta RAM consumano i container Docker mentre girano le query.
+    (Utilizzato per la generazione dei grafici sulle metriche di memoria).
 
-    Uso tipico:
-        profiler = DockerRAMProfiler(["postgres-benchmark", "neo4j-benchmark"], "./output")
-        profiler.start()
-        # ... esegui query ...
-        profiler.mark_event("query_start")
-        # ... query ...
-        profiler.mark_event("query_end")
-        profiler.stop()
-        json_path = profiler.save()
-        plot_ram_usage(json_path, "./output")
+    Implementato tramite invocazione asincrona di 'docker stats'.
     """
 
     def __init__(self, containers, output_dir, poll_interval=0.3):
@@ -35,7 +27,7 @@ class DockerRAMProfiler:
         self.thread = None
 
     def _parse_mem(self, mem_str):
-        """Interpreta le stringhe di memoria di Docker (es. '48.95MiB', '4.6GiB')."""
+        # Elabora l'output stringa di docker stats e converte i valori in MB
         mem_str = mem_str.strip()
         try:
             if "GiB" in mem_str:
@@ -120,15 +112,12 @@ def plot_ram_usage(
     title="Allocazione Dinamica RAM",
     filename="ram_usage_plot.svg",
 ):
-    """Genera un grafico a doppio pannello della variazione di RAM dei container Docker.
-
-    Pannello Superiore: PostgreSQL (variazione dinamica durante CTE multi-hop).
-    Pannello Inferiore: Neo4j (baseline alto per heap JVM pre-allocato, variazione minima).
-
-    NOTA METODOLOGICA: i valori assoluti dei due pannelli NON sono confrontabili
-    perché le configurazioni di memoria sono radicalmente diverse (PostgreSQL ~2 GB
-    shared_buffers vs Neo4j 6 GB heap + 2 GB page cache pre-allocati). La metrica
-    rilevante è la sola variazione netta (Δ) durante l'esecuzione della query.
+    """
+    Funzione per plottare i due grafici sovrapposti della RAM (Postgres sopra, Neo4j sotto).
+    
+    Nota: L'allocazione di base differisce significativamente perché Neo4j prealloca la memoria nella JVM all'avvio, mentre
+    Postgres alloca memoria in modo dinamico per i join.
+    L'analisi si concentra sul delta (Δ) durante l'esecuzione.
     """
     if not os.path.exists(json_path):
         print(f"Error: {json_path} not found.")
@@ -142,7 +131,7 @@ def plot_ram_usage(
     events = data["events"]
     containers = data["containers"]
 
-    # Calcola statistiche per ogni container
+    # Estrazione metriche massime e differenziali per ogni container
     stats = {}
     for c in containers:
         lst = ram_data[c]
@@ -153,7 +142,7 @@ def plot_ram_usage(
         delta = peak - baseline
         stats[c] = {"baseline": baseline, "peak": peak, "delta": delta, "raw": lst}
 
-    # Identifica le chiavi dei container
+    # Identificazione dei nomi effettivi dei container dai dati raccolti
     pg_key    = next((c for c in containers if "postgres" in c.lower()), None)
     neo4j_key = next((c for c in containers if "neo4j" in c.lower()), None)
 
@@ -161,9 +150,7 @@ def plot_ram_usage(
         print("Errore: container non trovati nei dati.")
         return
 
-    # ---------------------------------------------------------------------------
-    # Stile dark-mode coerente con scenari 1, 2, 3, 4
-    # ---------------------------------------------------------------------------
+    # Setup colori e stile del plot
     DARK_STYLE = {
     "figure.facecolor":  "#ffffff",
     "axes.facecolor":    "#ffffff",
@@ -187,7 +174,7 @@ def plot_ram_usage(
     with plt.rc_context(DARK_STYLE):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
 
-        # ---- PANNELLO 1: PostgreSQL ----
+        # Primo plot (Postgres)
         pg_raw  = stats[pg_key]["raw"]
         pg_base = stats[pg_key]["baseline"]
         pg_peak = stats[pg_key]["peak"]
@@ -203,7 +190,7 @@ def plot_ram_usage(
             ax1.axvline(events["PG_start"], color=COLOR_PG, ls="--", alpha=0.6, lw=1)
             ax1.axvline(events["PG_end"],   color=COLOR_PG, ls="--", alpha=0.6, lw=1)
 
-        # Annotazione delta
+        # Annotazione del differenziale di memoria
         delta_pg = stats[pg_key]["delta"]
         mid_t = (events.get("PG_start", ts[0]) + events.get("PG_end", ts[-1])) / 2
         ax1.annotate(
@@ -220,7 +207,7 @@ def plot_ram_usage(
         ax1.grid(True, which="both", alpha=0.3)
         ax1.set_ylim(bottom=max(0, pg_base - 5), top=pg_peak + 8)
 
-        # ---- PANNELLO 2: Neo4j ----
+        # Secondo plot (Neo4j)
         n4j_raw  = stats[neo4j_key]["raw"]
         n4j_base = stats[neo4j_key]["baseline"]
         n4j_peak = stats[neo4j_key]["peak"]
@@ -236,7 +223,7 @@ def plot_ram_usage(
             ax2.axvline(events["Neo4j_start"], color=COLOR_N4J, ls="--", alpha=0.6, lw=1)
             ax2.axvline(events["Neo4j_end"],   color=COLOR_N4J, ls="--", alpha=0.6, lw=1)
 
-        # Annotazione delta
+        # Annotazione del differenziale di memoria (Neo4j)
         delta_n4j = stats[neo4j_key]["delta"]
         mid_t2 = (events.get("Neo4j_start", ts[0]) + events.get("Neo4j_end", ts[-1])) / 2
         ax2.annotate(
@@ -261,8 +248,8 @@ def plot_ram_usage(
         plt.savefig(out_img, format="svg", dpi=300, bbox_inches="tight")
         plt.close()
 
-    # Stampa statistiche per aggiornamento LaTeX
-    print("\nSTATISTICHE RAM PER TABELLA LATEX:")
+    # Output riepilogativo per le tabelle LATEX
+    print("\nDATI PER LA TABELLA LATEX:")
     for c in containers:
         if c not in stats:
             continue

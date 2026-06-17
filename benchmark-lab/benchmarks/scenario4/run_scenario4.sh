@@ -48,7 +48,7 @@ done
 # Banner
 # ---------------------------------------------------------------------------
 echo -e "${GREEN}======================================================================"
-echo -e "  SCENARIO 4 – I Punti Deboli (Quando NON usare Neo4j)"
+echo -e "  SCENARIO 4 – I Punti Deboli (Limiti prestazionali di Neo4j)"
 echo -e "======================================================================${NC}"
 echo -e "  Test 4.1 – Full-Table Scan e Aggregazioni Globali"
 echo -e "  Test 4.2 – Inserimento Massivo di Dati Disconnessi (Bulk Insert)"

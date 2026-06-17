@@ -9,7 +9,7 @@ def process_entity(entity_type, is_edge):
     if not files:
         return
     
-    # Read header from the first non-empty file
+    # Lettura header dal primo file non vuoto
     first_line = ""
     for f_path in files:
         with open(f_path, 'r') as f:
@@ -19,18 +19,16 @@ def process_entity(entity_type, is_edge):
                 break
                 
     if not first_line:
-        print(f"Skipping {entity_type} (all files empty)")
+        print(f"Skip {entity_type} (empty)")
         return
         
     header = first_line.split('|')
     
-    # Check if this file has already been processed (first line is data).
-    # In LDBC SNB, data always starts with an ID (digit) or a date (digit).
-    # Headers start with letters (e.g. 'creationDate', 'id', 'PersonId').
+    # Verifica se già patchato
     is_header = not first_line[0].isdigit()
     
     if not is_header:
-        print(f"Skipping {entity_type} (already processed)")
+        print(f"Skip {entity_type} (already patched)")
         return
 
     if is_edge:
@@ -84,5 +82,5 @@ for sub in ['dynamic', 'static']:
             else: entities.append((name, False))
 
 for entity, is_edge in entities + edges:
-    print(f"Processing {entity}...")
+    print(f"Patching {entity}...")
     process_entity(entity, is_edge)

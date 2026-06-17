@@ -5,36 +5,30 @@ set -e
 LAB_DIR=$(pwd)
 SCALE_FACTOR="${SCALE_FACTOR:-0.1}"
 
-echo "============================================="
-echo "🚀 STARTING MASTER DATABASE BUILDER (SF${SCALE_FACTOR}) 🚀"
-echo "============================================="
+echo "Inizio caricamento dati (SF${SCALE_FACTOR})"
 
 export RAW_DATA_DIR="$LAB_DIR/out-sf${SCALE_FACTOR}/graphs/csv/raw/composite-projected-fk"
 NEO4J_TARGET_DIR="$LAB_DIR/data/neo4j-sf${SCALE_FACTOR}"
 POSTGRES_TARGET_DIR="$LAB_DIR/data/postgres-sf${SCALE_FACTOR}"
 LDBC_PG_SCRIPTS="$LAB_DIR/ldbc_snb_interactive_impls/postgres/scripts"
 
-# Create target directories
+# Creazione directory dati
 mkdir -p "$NEO4J_TARGET_DIR"
 mkdir -p "$POSTGRES_TARGET_DIR"
 
-echo "---------------------------------------------"
-echo "🔧 PHASE 1: PREPPING CSV HEADERS FOR NEO4J 🔧"
-echo "---------------------------------------------"
+echo "Patching header CSV per Neo4j..."
 RAW_DATA_DIR="$RAW_DATA_DIR" python3 patch_headers.py
-echo "Headers patched successfully!"
+echo "Patch degli header completata."
 
-echo "---------------------------------------------"
-echo "🟩 PHASE 2: BUILDING NEO4J GRAPH STORE 🟩"
-echo "---------------------------------------------"
-# Header path on host
+echo "Importazione in Neo4j..."
+# Cartella degli header sulla nostra macchina
 HEADER_DIR_HOST="$(dirname "$RAW_DATA_DIR")/headers"
 
-# Build arguments for neo4j-admin import
+# Variabili per neo4j-admin
 NODE_ARGS=""
 REL_ARGS=""
 
-# Use python to generate the arguments string to avoid shell escaping hell
+# Generazione argomenti tramite script Python per superare i limiti di bash
 ARGS=$(python3 -c "
 import os
 raw_dir = '$RAW_DATA_DIR'
@@ -90,41 +84,36 @@ docker run --rm \
   --bad-tolerance=10000000 \
   $ARGS
 
-echo "---------------------------------------------"
-echo "🐘 PHASE 3: BUILDING POSTGRESQL STORE 🐘"
-echo "---------------------------------------------"
+echo "Importazione in Postgres..."
 PG_CSV_DIR="$LAB_DIR/data/postgres-csv-formatted"
 mkdir -p "$PG_CSV_DIR"
 
-echo "Merging CSVs, mapping foreign keys, and matching PostgreSQL expected formats using pandas..."
+echo "Preparazione CSV per Postgres..."
 python3 postgres_prep.py
-echo "PostgreSQL CSVs successfully filtered and formatted!"
 
 cd "$LDBC_PG_SCRIPTS"
 
-# Wipe the postgres data dir so the container always gets a fresh init.
-# Must use docker (ubuntu) because the dir may be owned by root or the
-# container-internal postgres uid (999) from a previous run.
-echo "Wiping stale PostgreSQL data directory (if any): $POSTGRES_TARGET_DIR"
+# Pulizia vecchia directory dati Postgres
+echo "Pulizia directory Postgres..."
 docker run --rm \
   -v "$(dirname "$POSTGRES_TARGET_DIR")":/pgdata \
   ubuntu \
   rm -rf "/pgdata/$(basename "$POSTGRES_TARGET_DIR")"
 mkdir -p "$POSTGRES_TARGET_DIR"
 
-# Reset vars.sh to its original state just in case
+# Ripristino di vars.sh al valore di default
 git checkout -- vars.sh
 
-# Forcefully append our NEW merged directory path
+# Iniezione dei percorsi customizzati
 echo "export POSTGRES_CSV_DIR=\"$PG_CSV_DIR/\"" >> vars.sh
 echo "export POSTGRES_DATA_DIR=\"$POSTGRES_TARGET_DIR\"" >> vars.sh
 
-# Run the official LDBC tools
+# Esecuzione degli script di avvio LDBC
 ./start.sh
 ./load-in-one-step.sh
 ./stop.sh
 
 echo "============================================="
-echo "✅ BUILD COMPLETE! YOUR LAB IS READY. ✅"
+echo "✅ Completato. Database generati con successo."
 echo "============================================="
 cd "$LAB_DIR"

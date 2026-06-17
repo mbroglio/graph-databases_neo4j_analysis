@@ -1,12 +1,31 @@
 import pandas as pd
 import os, glob
 
-raw_dir = '/home/teo/out-sf0.1/graphs/csv/raw/composite-projected-fk'
-pg_dir = '/home/teo/benchmark-lab/data/postgres-csv-formatted'
+raw_dir = os.environ.get('RAW_DATA_DIR', './out-sf0.1/graphs/csv/raw/composite-projected-fk')
+pg_dir = os.environ.get('PG_CSV_DIR', './data/postgres-csv-formatted')
 
 def load(entity, sub):
     files = glob.glob(f"{raw_dir}/{sub}/{entity}/*.csv")
     if not files: return pd.DataFrame()
+    
+    # Header pre-patch
+    header_file = os.path.join(os.path.dirname(raw_dir), 'headers', f"{entity}-header.csv")
+    if os.path.exists(header_file):
+        with open(header_file, 'r') as f:
+            header = f.readline().strip().split('|')
+        df = pd.concat([pd.read_csv(f, sep='|', low_memory=False, names=header) for f in files])
+        
+        # Normalizzazione nomi colonne
+        rename_map = {}
+        for h in header:
+            clean = h
+            if h.startswith(':ID('): clean = ':ID'
+            elif h.startswith(':START_ID('): clean = ':START_ID'
+            elif h.startswith(':END_ID('): clean = ':END_ID'
+            rename_map[h] = clean
+        df = df.rename(columns=rename_map)
+        return df
+    
     return pd.concat([pd.read_csv(f, sep='|', low_memory=False) for f in files])
 
 def save(df, name, sub):
@@ -15,7 +34,7 @@ def save(df, name, sub):
     os.makedirs(out_dir, exist_ok=True)
     df.to_csv(f"{out_dir}/{name}_0_0.csv", sep='|', index=False)
 
-print("Loading Entities...")
+print("Caricamento entità in corso...")
 post = load('Post', 'dynamic')
 comment = load('Comment', 'dynamic')
 forum = load('Forum', 'dynamic')
@@ -25,7 +44,7 @@ place = load('Place', 'static')
 tag = load('Tag', 'static')
 tagclass = load('TagClass', 'static')
 
-print("Loading FK Edges...")
+print("Caricamento archi (Foreign Keys)...")
 post_creator = load('Post_hasCreator_Person', 'dynamic')
 forum_post = load('Forum_containerOf_Post', 'dynamic')
 post_country = load('Post_isLocatedIn_Country', 'dynamic')
@@ -42,7 +61,7 @@ place_place = load('Place_isPartOf_Place', 'static')
 tag_tagclass = load('Tag_hasType_TagClass', 'static')
 tagclass_tagclass = load('TagClass_isSubclassOf_TagClass', 'static')
 
-print("Processing Entities (Mapping foreign keys to Postgres schema)...")
+print("Merge delle tabelle (mappiamo gli archi come chiavi esterne per Postgres)...")
 if not post.empty:
     p = post.copy()
     p = p.merge(post_creator[[':START_ID', ':END_ID']], left_on=':ID', right_on=':START_ID', how='left').rename(columns={':END_ID': 'creatorid'}).drop(columns=[':START_ID'])
@@ -83,7 +102,7 @@ if not person.empty:
     pe['placeid'] = pe['placeid'].astype('Int64')
     save(pe, 'person', 'dynamic')
     
-    # Flatten arrays for email and language
+    # Unnest di email e lingue
     emails = []
     languages = []
     for _, row in person.iterrows():
@@ -118,7 +137,7 @@ if not tagclass.empty:
     tc['subclassof'] = tc['subclassof'].astype('Int64')
     save(tc, 'tagclass', 'static')
 
-print("Processing Edges (Reordering to match PostgreSQL COPY formats)...")
+print("Elaborazione relazioni rimanenti...")
 def save_edge(entity, cols, name, sub):
     df = load(entity, sub)
     if not df.empty: save(df[cols], name, sub)
@@ -134,4 +153,4 @@ save_edge('Person_hasInterest_Tag', [':START_ID', ':END_ID'], 'person_hasInteres
 save_edge('Post_hasTag_Tag', [':START_ID', ':END_ID'], 'post_hasTag_tag', 'dynamic')
 save_edge('Comment_hasTag_Tag', [':START_ID', ':END_ID'], 'comment_hasTag_tag', 'dynamic')
 
-print("PostgreSQL CSV formatting successfully merged and standardized!")
+print("Elaborazione completata. CSV per PostgreSQL (COPY) generati con successo.")

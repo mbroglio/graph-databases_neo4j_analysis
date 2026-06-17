@@ -1,3 +1,4 @@
+// Query sperimentali preliminari utilizzate per la validazione prima dell'inserimento negli script di automazione.
 MATCH (p:Person) WITH p ORDER BY size((p)-[:KNOWS]-()) DESC LIMIT 1
 MATCH (p)-[*1..3]-(q:Person) RETURN count(DISTINCT q);
 

@@ -11,7 +11,7 @@ Legge results.json e produce due grafici SVG:
      - asse y = latenza di ogni transazione (ms)
      - colore verde = scrittura andata a buon fine
      - colore rosso = scrittura fallita (finestra di downtime)
-     Il grafico evidenzia visivamente la "finestra nera" del downtime Raft
+     Il grafico evidenzia visivamente il downtime Raft
      e il momento preciso della rielezione del leader.
 
   2. load_balancing.svg
@@ -94,7 +94,7 @@ def plot_fault_tolerance_timeline(results: dict, out_dir: str):
         print("[SKIP] Nessun record di scrittura nella timeline.")
         return
 
-    # Separa per esito
+    # Raggruppamento risultati per esito transazione
     t_ok    = [r[0] for r in records if r[1]]
     lat_ok  = [r[2] for r in records if r[1]]
     t_fail  = [r[0] for r in records if not r[1]]

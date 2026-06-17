@@ -1,36 +1,7 @@
 #!/usr/bin/env python3
 """
-=============================================================================
-SCENARIO 1: La Potenza del Grafo (Neo4j vs RDBMS)
-=============================================================================
-Test suite che confronta Neo4j e PostgreSQL su tre classi di query grafiche:
-  1.1 - Query Multi-Hop (profondità di navigazione crescente: 1, 2, 3, 4 hop)
-  1.2 - Pattern Matching e Ricerca di Cicli (triangle detection)
-  1.3 - Pathfinding (Cammini Minimi / Shortest Path) – distanze 1..6 hop
-
-Metodologia:
-  - N_WARMUP=20 esecuzioni di warm-up per permettere la compilazione JIT della JVM
-  - N_RUNS=50   ripetizioni per ogni query (solidità statistica)
-  - Campionamento stratificato dei nodi: low/mid/high degree (non manuale)
-  - Metriche: media, mediana, deviazione standard, P90, min, max (in ms)
-  - Throughput in QPS durante lo stress test
-
-NOTE METODOLOGICHE:
-  Il P90 di Neo4j tende ad essere più alto della mediana per via dei cicli di
-  Garbage Collection (GC) della JVM. Questo è un comportamento fisiologico del
-  runtime Java/JVM e non indica un problema di performance strutturale: durante
-  un ciclo GC la JVM può sospendere brevemente tutti i thread applicativi
-  (Stop-The-World pause), causando picchi di latenza isolati. La mediana
-  rimane invariata e rappresenta la latenza reale in assenza di GC.
-
-  NOTA GDS (Triangle Count): la query globale di conteggio triangoli eseguita
-  con Cypher puro (MATCH pattern matching su tripla hop) è intenzionalmente
-  una query OLTP transazionale. In un ambiente produttivo reale, questa
-  operazione verrebbe demandata alla libreria Graph Data Science (GDS) di Neo4j
-  via `CALL gds.triangleCount.stream(...)`, implementata in C++ e ottimizzata
-  per l'analisi batch OLAP. Questo test valuta volutamente i limiti del motore
-  transazionale Cypher. Con GDS, Neo4j annienterebbe PostgreSQL su questa query.
-=============================================================================
+Scenario 1: Benchmark query multi-hop, triangle detection e shortest path.
+Confronto prestazioni Neo4j vs PostgreSQL.
 """
 
 import time
@@ -134,14 +105,12 @@ def print_stats(label: str, stats: dict):
     print(f"    Std Dev    : {stats['stdev_ms']:>10.3f} ms")
     print(f"    Mediana    : {stats['median_ms']:>10.3f} ms")
     print(f"    P90        : {stats['p90_ms']:>10.3f} ms  "
-          f"(↑ picchi da GC JVM – vedi nota metodologica)")
+          f"(picchi attribuibili alla GC della JVM)")
     print(f"    Min        : {stats['min_ms']:>10.3f} ms")
     print(f"    Max        : {stats['max_ms']:>10.3f} ms")
 
 
-# ===========================================================================
-# CONNESSIONI
-# ===========================================================================
+# Setup connessioni ai due DB
 
 
 def get_neo4j_driver():
@@ -154,9 +123,8 @@ def get_pg_conn():
     )
 
 
-# ===========================================================================
-# CAMPIONAMENTO STRATIFICATO DEI NODI RADICE
-# ===========================================================================
+# Estrazione pseudocasuale dei nodi di partenza (variazione di connettività)
+# Garantisce rappresentatività statistica del campione selezionato.
 
 def sample_nodes_stratified(neo4j_driver, n_low: int = 5, n_mid: int = 5,
                               n_high: int = 5) -> dict:
@@ -166,7 +134,7 @@ def sample_nodes_stratified(neo4j_driver, n_low: int = 5, n_mid: int = 5,
       - mid:  nodi con grado nella metà centrale (grado medio)
       - high: nodi con grado nell'ultimo quartile (super-nodi)
 
-    Questo evita la selezione manuale dei nodi e garantisce confronti
+    Il campionamento evita bias di selezione manuale e garantisce confronti
     statisticamente rappresentativi dell'intera distribuzione del grafo.
     """
     with neo4j_driver.session() as s:
@@ -208,9 +176,7 @@ def sample_nodes_stratified(neo4j_driver, n_low: int = 5, n_mid: int = 5,
     }
 
 
-# ===========================================================================
-# TEST 1.1 – QUERY MULTI-HOP
-# ===========================================================================
+# TEST 1.1 - I vari HOP (1, 2, 3, 4)
 
 
 def neo4j_multihop(session, person_id: int, depth: int):
@@ -227,15 +193,11 @@ def pg_multihop(conn, person_id: int, depth: int):
     """
     Equivalente SQL con CTE ricorsiva per navigare la rete KNOWS fino a 'depth' livelli.
 
-    NOTA IMPORTANTE: la tabella `knows` è già bidirezionale (il loader LDBC
-    inserisce sia (A,B) che (B,A) per ogni relazione). Pertanto è sufficiente
+    La tabella `knows` è bidirezionale. Pertanto è sufficiente
     navigare in una sola direzione (k_person1id → k_person2id) per raggiungere
-    tutti i vicini, esattamente come fa Neo4j con il pattern non direzionato
-    `-[:KNOWS]-`.
+    tutti i vicini.
 
-    NON viene impostato alcun statement_timeout: la durata effettiva è il dato
-    scientifico rilevante (dimostra la crescita esponenziale del costo SQL
-    rispetto alla traversal BFS di Neo4j).
+    L'assenza di statement_timeout consente di rilevare la crescita esponenziale del costo computazionale SQL.
     """
     cur = conn.cursor()
     sql = """
@@ -338,17 +300,13 @@ def run_multihop_test(neo4j_driver, pg_conn, sampled_nodes: dict):
     return results
 
 
-# ===========================================================================
-# TEST 1.2 – PATTERN MATCHING E RICERCA DI CICLI (Triangle Detection)
-# ===========================================================================
+# TEST 1.2 - TRIANGOLI (Pattern Matching)
 
-# NOTA METODOLOGICA (Triangle Count):
+# Nota metodologica (Triangle Count):
 # Il conteggio globale dei triangoli via Cypher puro è una query OLTP
 # transazionale. In produzione, questa operazione si delega alla libreria
 # Graph Data Science (GDS) di Neo4j: `CALL gds.triangleCount.write(...)`.
-# GDS è implementata in C++ e ottimizzata per analisi OLAP batch; con GDS
-# Neo4j supera ampiamente PostgreSQL su questa metrica. Questo test valuta
-# volutamente i limiti del motore transazionale Cypher puro per fornire
+# Questo test valuta il motore transazionale Cypher puro per fornire
 # un confronto OLTP equo.
 
 
@@ -418,8 +376,7 @@ def run_triangle_test(neo4j_driver, pg_conn, sampled_nodes: dict):
 
     # --- Sub-test A: global triangle count ---
     sub_banner("1.2a – Conteggio globale triangoli (tutti i nodi)")
-    print("  NOTA METODOLOGICA: questa query usa Cypher OLTP puro. In produzione")
-    print("  si usa GDS gds.triangleCount.write() che è ~20x più veloce.")
+    print("  Nota: implementazione Cypher OLTP puro")
 
     # Warm-up
     with neo4j_driver.session() as s:
@@ -454,8 +411,7 @@ def run_triangle_test(neo4j_driver, pg_conn, sampled_nodes: dict):
     print_stats("Neo4j (OLTP Cypher)", neo4j_stats)
     print_stats("PostgreSQL", pg_stats)
     print(f"  >>> Speedup Neo4j vs PostgreSQL: {speedup}x")
-    if isinstance(speedup, float) and speedup < 1.0:
-        print(f"  [NOTA] Neo4j perde su questa metrica OLTP – in produzione GDS supererebbe PG.")
+        print(f"  Neo4j presenta latenze superiori su metriche OLTP; in scenari di produzione si consiglia l'uso di GDS.")
 
     results["global_triangles"] = {
         "neo4j_result": int(neo4j_global),
@@ -522,9 +478,7 @@ def run_triangle_test(neo4j_driver, pg_conn, sampled_nodes: dict):
     return results
 
 
-# ===========================================================================
-# TEST 1.3 – PATHFINDING (CAMMINI MINIMI)
-# ===========================================================================
+# TEST 1.3 - SHORTEST PATH
 
 
 def neo4j_shortest_path(session, src_id: int, dst_id: int, max_hops: int = 6):
@@ -718,16 +672,14 @@ def run_shortest_path_test(neo4j_driver, pg_conn, sampled_nodes: dict):
     return results
 
 
-# ===========================================================================
-# MAIN
-# ===========================================================================
+# ESECUZIONE PRINCIPALE
 
 
 def main():
     print(f"\n{'#' * 70}")
     print(f"#  SCENARIO 1: La Potenza del Grafo – Neo4j vs PostgreSQL")
     print(f"#  Data/ora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"#  Campionamento: {N_SAMPLE_LOW} low-deg + {N_SAMPLE_MID} mid-deg + {N_SAMPLE_HIGH} high-deg")
+    print(f"#  Campionamento: {N_SAMPLE_LOW} basso grado, {N_SAMPLE_MID} medio grado, {N_SAMPLE_HIGH} alto grado")
     print(f"{'#' * 70}")
 
 

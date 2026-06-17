@@ -1,34 +1,6 @@
 #!/usr/bin/env python3
 """
-=============================================================================
-SCENARIO 1 – Generazione Grafici
-=============================================================================
-Legge results.json e produce i seguenti grafici SVG con error bars (±σ):
-
-  1. multihop_plot.svg
-     Confronto Neo4j vs PostgreSQL su query Multi-Hop (1..4 hop).
-     - Linee con marker e barre di errore (±1 deviazione standard)
-     - Scala logaritmica sull'asse Y per rendere visibili tutti gli ordini
-       di grandezza contemporaneamente.
-
-  2. triangle_plot.svg
-     Confronto latenza globale triangle detection.
-     - Barre con error bars (±σ)
-     - Annotazione della nota metodologica GDS
-
-  3. multihop_speedup_plot.svg
-     Speedup di Neo4j vs PostgreSQL al crescere dei hop.
-     - Visualizza l'andamento asintotico dello speedup.
-
-  4. shortest_path_plot.svg
-     Confronto latenza pathfinding Neo4j vs PostgreSQL per hop crescenti.
-     - Include gestione del caso TIMEOUT (PostgreSQL su hop elevati).
-
-NOTE: Le error bars mostrano ±1 deviazione standard (σ), un intervallo che
-      copre ~68% delle misurazioni, secondo la convenzione scientifica standard.
-      Il P90 elevato di Neo4j rispetto alla mediana è fisiologico: è causato
-      dai cicli di Garbage Collection (GC) della JVM (Stop-The-World pause).
-=============================================================================
+Generazione dei grafici per lo Scenario 1 leggendo i dati da results.json.
 """
 
 import json
@@ -83,9 +55,7 @@ def load_results(path: str) -> dict:
         return json.load(f)
 
 
-# ---------------------------------------------------------------------------
-# GRAFICO 1 – Multi-Hop con error bars (±σ)
-# ---------------------------------------------------------------------------
+# GRAFICO 1 - Multi-Hop
 
 def plot_multihop(results: dict, out_dir: str):
     mh = results.get("test_1_1_multihop", {})
@@ -152,9 +122,7 @@ def plot_multihop(results: dict, out_dir: str):
         print(f"[OK] Salvato: {out_path}")
 
 
-# ---------------------------------------------------------------------------
-# GRAFICO 2 – Speedup Multi-Hop
-# ---------------------------------------------------------------------------
+# GRAFICO 2 - Speedup Multi-Hop
 
 def plot_multihop_speedup(results: dict, out_dir: str):
     mh = results.get("test_1_1_multihop", {})
@@ -205,9 +173,7 @@ def plot_multihop_speedup(results: dict, out_dir: str):
         print(f"[OK] Salvato: {out_path}")
 
 
-# ---------------------------------------------------------------------------
-# GRAFICO 3 – Triangle Detection con error bars
-# ---------------------------------------------------------------------------
+# GRAFICO 3 - Triangle Detection
 
 def plot_triangles(results: dict, out_dir: str):
     tri = results.get("test_1_2_triangle", {})
@@ -291,9 +257,7 @@ def plot_triangles(results: dict, out_dir: str):
         print(f"[OK] Salvato: {out_path}")
 
 
-# ---------------------------------------------------------------------------
-# GRAFICO 4 – Shortest Path (con timeout handling)
-# ---------------------------------------------------------------------------
+# GRAFICO 4 - Shortest Path
 
 def plot_shortest_path(results: dict, out_dir: str):
     sp = results.get("test_1_3_shortest_path", {})
@@ -375,9 +339,7 @@ def plot_shortest_path(results: dict, out_dir: str):
         print(f"[OK] Salvato: {out_path}")
 
 
-# ---------------------------------------------------------------------------
 # MAIN
-# ---------------------------------------------------------------------------
 
 def main():
     import argparse

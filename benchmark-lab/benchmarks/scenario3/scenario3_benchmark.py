@@ -1,39 +1,7 @@
 #!/usr/bin/env python3
 """
-=============================================================================
-SCENARIO 3: Sistemi Distribuiti e Teorema CAP
-=============================================================================
-Test suite per l'analisi delle architetture distribuite ad alta affidabilità
-con Neo4j 5 in configurazione cluster Raft (3 primari + 2 secondari):
-
-  3.1 - Configurazione e Verifica del Cluster
-        Verifica che il cluster sia operativo, identifica il Leader Raft
-        e la composizione dei nodi (ruolo, stato, version).
-
-  3.2 - Tolleranza ai Guasti (Fault Tolerance)
-        Spegnimento forzato del nodo Leader durante un flusso continuo di
-        scritture. Misurazione del tempo esatto di indisponibilità (downtime),
-        delle scritture perse e della transizione Raft completa
-        (heartbeat timeout → elezione → quorum → ripresa).
-
-  3.3 - Scalabilità in Lettura (Causal Consistency via Bookmark)
-        Carico massivo di query di navigazione sul grafo via routing
-        server-side (neo4j://). Misurazione del throughput QPS, della
-        distribuzione del carico sui nodi secondari e dell'overhead dei
-        Bookmark per la Causal Consistency (le scritture sono sempre visibili
-        anche su repliche asincrone).
-
-Prerequisiti:
-  - Cluster avviato con infrastructure/docker-compose-cluster.yml
-  - Dati LDBC SF 0.1 caricati nel cluster
-  - Docker SDK for Python:  pip install docker
-  - Driver Neo4j:           pip install neo4j
-
-Metodologia:
-  - WRITE_THREADS thread per il flusso di scrittura continua (3.2)
-  - READ_THREADS  thread per il carico di lettura (3.3)
-  - N_RUNS        cicli di lettura per raccogliere statistiche stabili
-=============================================================================
+Scenario 3: Sistemi Distribuiti e Teorema CAP.
+Test di fault tolerance (crash del leader) e causal consistency in un cluster Raft.
 """
 
 import os
@@ -106,7 +74,7 @@ LEADER_CONTAINER_NAME = None   # popolato da detect_cluster_roles()
 # ---------------------------------------------------------------------------
 # Parametri benchmark
 # ---------------------------------------------------------------------------
-N_RUNS          = 5000  # letture per verifica Causal Consistency (solidità statistica)
+N_RUNS          = 5000  # letture per verifica Causal Consistency (significatività statistica)
 N_WARMUP        = 15    # warm-up connessioni
 WRITE_THREADS   = 4     # thread scrittori durante il fault tolerance (3.2)
 WRITE_DURATION  = 15.0  # secondi di scrittura continua prima dello stop
@@ -115,14 +83,13 @@ READ_THREADS    = 16    # thread lettori per il test di scalabilità (3.3)
 READ_DURATION   = 20.0  # secondi di carico di lettura (3.3)
 
 # ---------------------------------------------------------------------------
-# NOTA INFRASTRUTTURALE - Latenze Docker (importante per interpretare i dati)
+# Nota architetturale - Latenze in ambiente Docker
 # ---------------------------------------------------------------------------
 # In ambienti Docker su singolo host, le latenze di rete osservate possono
 # essere anomale rispetto a un cluster reale. In particolare:
-#   - Un nodo può rispondere a 6ms, gli altri a 1400ms: questo indica
-#     che la rete virtuale Docker (bridge) sta "strozzando" i pacchetti,
+#   - Un nodo può rispondere a 6ms, gli altri a 1400ms: questo indica un potenziale collo di bottiglia nella rete virtuale Docker (bridge),
 #     oppure che i container lottano per la CPU (frequente senza limiti CPU).
-#   - SOLUZIONE: tutti i container sono sulla stessa docker network bridge
+#   - Soluzione adottata: tutti i container sono sulla stessa docker network bridge
 #     e ciascuno ha un limite di CPU esplicito (--cpus="1.5").
 #   - Se le latenze anomale persistono, questo viene dichiarato come limite
 #     infrastrutturale nella tesi: i tempi di rielezione Raft misurati
@@ -178,9 +145,7 @@ def get_driver(uri: str = CLUSTER_URI):
     return GraphDatabase.driver(uri, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 
-# ===========================================================================
-# TEST 3.1 – CONFIGURAZIONE E VERIFICA DEL CLUSTER
-# ===========================================================================
+# TEST 3.1 - CONTROLLIAMO CHE IL CLUSTER SIA VIVO
 
 def detect_cluster_roles(driver) -> dict:
     """
@@ -294,9 +259,7 @@ def run_cluster_info_test(driver) -> dict:
     }
 
 
-# ===========================================================================
-# TEST 3.2 – TOLLERANZA AI GUASTI (FAULT TOLERANCE)
-# ===========================================================================
+# TEST 3.2 - CRASH DEL LEADER (FAULT TOLERANCE)
 
 class WriterWorker:
     """
@@ -337,13 +300,13 @@ def stop_leader_container(container_name: str) -> float:
     """
     Esegue una PARTIZIONE DI RETE sul container Docker del leader:
     disconnette il container dalla rete Docker senza spegnerlo.
-    Questo è l'approccio corretto per testare il Teorema CAP (profilo CP):
+    Questo approccio verifica operativamente il Teorema CAP (profilo CP):
       - Il leader è ACCESO ma ISOLATO dagli altri nodi
       - I follower non ricevono heartbeat → avviano elezione Raft
       - Il leader isolato non raggiunge il quorum → non può committare
       - Nessun split-brain: il sistema va in CP (Consistency over Availability)
 
-    NOTA: se il container usa più reti Docker, vengono disconnesse tutte.
+    Nota: verranno disconnesse tutte le interfacce di rete del container.
     Restituisce il timestamp assoluto in cui la partizione è iniziata.
     """
     if not DOCKER_AVAILABLE:
@@ -551,7 +514,7 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
     print(f"  Successi                       : {success_writes}")
     print(f"  Errori (scritture rifiutate)   : {failed_writes}")
     if failed_writes > 0:
-        print(f"  [NOTA] Le {failed_writes} scritture fallite NON implicano corruzione dei dati.")
+        print(f"  [Nota] Le {failed_writes} scritture fallite NON implicano corruzione dei dati.")
         print(f"         Il client Python riceve un'eccezione SessionExpired o NotALeader")
         print(f"         durante la finestra di rielezione Raft. In un'architettura")
         print(f"         produttiva reale, il driver ufficiale Neo4j (neo4j-driver-python)")
@@ -565,7 +528,7 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
               f"({failover['t_recovery_s']:.2f}s)")
         print(f"  Profilo CAP validato           : CP ✅  "
               f"(indisponibilità temporanea per preservare consistenza)")
-        print(f"  NOTA CAP: con partizione di rete (non SIGKILL), il leader isolato")
+        print(f"  Nota CAP: durante la partizione di rete (non SIGKILL), il leader isolato")
         print(f"            è ancora acceso ma non può committare (no quorum). I follower")
         print(f"            eleggono un nuovo leader. Questo dimostra CP: no split-brain.")
               
@@ -637,9 +600,7 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
     }
 
 
-# ===========================================================================
-# TEST 3.3 – SCALABILITÀ IN LETTURA (CAUSAL CONSISTENCY VIA BOOKMARK)
-# ===========================================================================
+# TEST 3.3 - SCALABILITÀ E CAUSAL CONSISTENCY
 
 class ReaderWorker:
     """
