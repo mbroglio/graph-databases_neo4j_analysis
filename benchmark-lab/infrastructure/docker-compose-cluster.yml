@@ -1,14 +1,4 @@
-# =============================================================================
-# Neo4j 5 Cluster – Autonomous Clustering (Raft)
-# =============================================================================
-# Topologia: 3 Database Primaries (consenso Raft) + 2 Database Secondaries
-#
-# Utilizzo:
-#   NEO4J_ACCEPT_LICENSE_AGREEMENT=yes docker compose \
-#     -f docker-compose-cluster.yml up -d
-#
-# Entry-point Bolt (routing): localhost:7687  (neo4j-core1)
-# =============================================================================
+# Configurazione cluster Neo4j Raft
 
 x-neo4j-env: &neo4j-env
   NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
@@ -23,17 +13,12 @@ x-neo4j-common: &neo4j-common
   deploy:
     resources:
       limits:
-        # cpus="1.5" per container: previene che un singolo container monopolizzi
-        # la CPU dell'host, il che causa latenze anomale sulla rete virtuale Docker
-        # (es. un nodo a 6ms, gli altri a 1400ms). Con questo limite ciascun container
-        # ha risorse garantite e le latenze Raft si stabilizzano.
+        # Imposta limite CPU container
         cpus: "1.5"
         memory: 1200m
 
 services:
-  # ---------------------------------------------------------------------------
-  # Primaries – partecipano al consenso Raft
-  # ---------------------------------------------------------------------------
+  # Definisce nodi primari
   neo4j-core1:
     <<: *neo4j-common
     container_name: neo4j-core1
@@ -94,9 +79,7 @@ services:
     volumes:
       - neo4j-core3-data:/data
 
-  # ---------------------------------------------------------------------------
-  # Secondaries – read-only, log-shipping asincrono
-  # ---------------------------------------------------------------------------
+  # Definisce nodi secondari
   neo4j-secondary1:
     <<: *neo4j-common
     container_name: neo4j-secondary1

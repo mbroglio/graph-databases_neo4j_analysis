@@ -19,7 +19,7 @@ def test_wal():
     print("=== TEST WAL e CRASH RECOVERY ===")
     driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
     
-    # Prepara dati
+    # Inizializza dati
     with driver.session() as s:
         s.run("MATCH (p:Person) REMOVE p.wal_test")
         
@@ -28,12 +28,12 @@ def test_wal():
         with driver.session() as s:
             tx = s.begin_transaction()
             tx.run("MATCH (p:Person) SET p.wal_test = 'in_progress'")
-            # Transazione mantenuta attiva, simulazione failure
+            # Mantiene attiva la transazione e simula failure
             print("[2] Esecuzione DOCKER KILL (simulazione crash del server) durante transazione attiva...")
             subprocess.run(["docker", "kill", "neo4j-benchmark"], check=True)
-            # Attesa spegnimento container
+            # Attende spegnimento container
             time.sleep(2)
-            # Impossibile eseguire commit a questo punto
+            # Impossibile eseguire commit
     except Exception as e:
         print(f"  [!] Connessione interrotta attesa: {e}")
         
@@ -43,7 +43,7 @@ def test_wal():
     print("[4] Attesa disponibilità database...")
     wait_for_neo4j()
     
-    # Verifica
+    # Esegue verifica
     print("[5] Verifica integrità dati (Atomicity / Rollback via WAL)...")
     driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
     with driver.session() as s:
@@ -54,7 +54,7 @@ def test_wal():
         else:
             print(f"  ❌ ERRORE: Trovati {c} nodi con dati parziali!")
             
-    # Cleanup
+    # Esegue pulizia
     with driver.session() as s:
         s.run("MATCH (p:Person) REMOVE p.wal_test")
 

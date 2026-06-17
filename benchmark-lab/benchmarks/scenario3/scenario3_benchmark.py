@@ -15,9 +15,7 @@ import concurrent.futures
 from collections import defaultdict
 from datetime import datetime
 
-# ---------------------------------------------------------------------------
-# Dipendenze – installazione automatica se mancanti
-# ---------------------------------------------------------------------------
+# Verifica dipendenze
 try:
     from neo4j import GraphDatabase, exceptions as neo4j_exc
 except ImportError:
@@ -37,18 +35,12 @@ except ImportError:
     except ImportError:
         DOCKER_AVAILABLE = False
 
-# ---------------------------------------------------------------------------
-# Configurazione connessione al cluster
-# ---------------------------------------------------------------------------
-# Il routing neo4j:// richiede il nodo entry-point; il driver distribuisce
-# automaticamente READ verso secondari e WRITE verso il leader corrente.
+# Configurazione cluster
 CLUSTER_URI   = os.environ.get("NEO4J_CLUSTER_URI", "neo4j://neo4j-core1:7687")
 NEO4J_USER    = "neo4j"
 NEO4J_PASSWORD = "password"
 
-# URI diretti per verifica nodi singoli (senza routing)
-# Usano i nomi hostname dei container quando eseguiti nella rete Docker interna,
-# oppure le porte pubblicate sull'host se eseguiti dall'esterno.
+# Imposta URI nodi
 _IN_DOCKER = os.environ.get("IN_DOCKER", "0") == "1"
 if _IN_DOCKER:
     NODE_URIS = {
@@ -67,13 +59,10 @@ else:
         "neo4j-secondary2": "bolt://localhost:7691",
     }
 
-# Nome del container leader da abbattere nel test 3.2
-# (viene rilevato dinamicamente dallo script)
+# Nome container leader
 LEADER_CONTAINER_NAME = None   # popolato da detect_cluster_roles()
 
-# ---------------------------------------------------------------------------
-# Parametri benchmark
-# ---------------------------------------------------------------------------
+# Parametri test
 N_RUNS          = 5000  # letture per verifica Causal Consistency (significatività statistica)
 N_WARMUP        = 15    # warm-up connessioni
 WRITE_THREADS   = 4     # thread scrittori durante il fault tolerance (3.2)
@@ -82,23 +71,7 @@ POST_STOP_MAX   = 60.0  # attesa massima per la rielezione (secondi)
 READ_THREADS    = 16    # thread lettori per il test di scalabilità (3.3)
 READ_DURATION   = 20.0  # secondi di carico di lettura (3.3)
 
-# ---------------------------------------------------------------------------
-# Nota architetturale - Latenze in ambiente Docker
-# ---------------------------------------------------------------------------
-# In ambienti Docker su singolo host, le latenze di rete osservate possono
-# essere anomale rispetto a un cluster reale. In particolare:
-#   - Un nodo può rispondere a 6ms, gli altri a 1400ms: questo indica un potenziale collo di bottiglia nella rete virtuale Docker (bridge),
-#     oppure che i container lottano per la CPU (frequente senza limiti CPU).
-#   - Soluzione adottata: tutti i container sono sulla stessa docker network bridge
-#     e ciascuno ha un limite di CPU esplicito (--cpus="1.5").
-#   - Se le latenze anomale persistono, questo viene dichiarato come limite
-#     infrastrutturale nella tesi: i tempi di rielezione Raft misurati
-#     includono l'overhead della virtualizzazione Docker e non sono
-#     rappresentativi di un cluster bare-metal.
-
-# ---------------------------------------------------------------------------
 # Utility
-# ---------------------------------------------------------------------------
 
 def banner(title: str):
     print("\n" + "=" * 70)
@@ -111,7 +84,7 @@ def sub_banner(title: str):
 
 
 def compute_stats(times_ms: list[float]) -> dict:
-    """Calcola statistiche di latenza su una lista di misurazioni."""
+    """Calcola le statistiche di latenza."""
     if not times_ms:
         return {}
     sorted_t = sorted(times_ms)
@@ -141,22 +114,18 @@ def print_stats(label: str, stats: dict):
 
 
 def get_driver(uri: str = CLUSTER_URI):
-    """Restituisce un driver Neo4j connesso all'URI specificato."""
+    """Restituisce un driver Neo4j."""
     return GraphDatabase.driver(uri, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 
-# TEST 3.1 - CONTROLLIAMO CHE IL CLUSTER SIA VIVO
+# TEST 3.1 - Controllo cluster
 
 def detect_cluster_roles(driver) -> dict:
-    """
-    Interroga il cluster via SHOW SERVERS (Neo4j 5.x) e SHOW DATABASES
-    per rilevare il leader Raft corrente.
-    Aggiorna anche la variabile globale LEADER_CONTAINER_NAME.
-    """
+    """Rileva i ruoli del cluster e il leader Raft corrente."""
     global LEADER_CONTAINER_NAME
     cluster_info = {}
     try:
-        # Neo4j 5.x: SHOW SERVERS mostra tutti i membri del cluster
+        # Estrae i membri del cluster
         with driver.session(database="system") as s:
             servers = list(s.run(
                 "SHOW SERVERS YIELD serverId, name, address, state, health"
@@ -173,8 +142,7 @@ def detect_cluster_roles(driver) -> dict:
                     "health":    health,
                 }
 
-        # Scopri chi è il leader interrogando SHOW DATABASES
-        # In Neo4j 5 il leader ha ruolo 'primary' con writer=true
+        # Rileva il leader
         with driver.session(database="system") as s:
             dbs = list(s.run(
                 "SHOW DATABASES YIELD name, address, role, requestedStatus, currentStatus, writer "
@@ -183,7 +151,7 @@ def detect_cluster_roles(driver) -> dict:
             for rec in dbs:
                 if rec.get("writer") and rec.get("role") == "primary":
                     addr = rec.get("address", "")
-                    # Mappa l'indirizzo al nome del container
+                    # Mappa indirizzo a nome container
                     for cname in NODE_URIS:
                         if cname in addr:
                             if LEADER_CONTAINER_NAME is None:
@@ -195,10 +163,7 @@ def detect_cluster_roles(driver) -> dict:
 
 
 def probe_node_alive(uri: str, timeout: float = 2.0) -> tuple[bool, float]:
-    """
-    Controlla se un nodo risponde alla connessione Bolt.
-    Restituisce (alive: bool, latency_ms: float).
-    """
+    """Controlla se un nodo risponde via Bolt."""
     try:
         drv = GraphDatabase.driver(
             uri,
@@ -259,14 +224,10 @@ def run_cluster_info_test(driver) -> dict:
     }
 
 
-# TEST 3.2 - CRASH DEL LEADER (FAULT TOLERANCE)
+# TEST 3.2 - Crash leader
 
 class WriterWorker:
-    """
-    Worker che esegue scritture continue su un nodo Person e registra
-    ogni transazione come (timestamp, success, latency_ms).
-    Viene fermato tramite stop_event.
-    """
+    """Thread di scrittura continua."""
     def __init__(self, driver, target_id: int):
         self.driver    = driver
         self.target_id = target_id
@@ -297,25 +258,14 @@ class WriterWorker:
 
 
 def stop_leader_container(container_name: str) -> float:
-    """
-    Esegue una PARTIZIONE DI RETE sul container Docker del leader:
-    disconnette il container dalla rete Docker senza spegnerlo.
-    Questo approccio verifica operativamente il Teorema CAP (profilo CP):
-      - Il leader è ACCESO ma ISOLATO dagli altri nodi
-      - I follower non ricevono heartbeat → avviano elezione Raft
-      - Il leader isolato non raggiunge il quorum → non può committare
-      - Nessun split-brain: il sistema va in CP (Consistency over Availability)
-
-    Nota: verranno disconnesse tutte le interfacce di rete del container.
-    Restituisce il timestamp assoluto in cui la partizione è iniziata.
-    """
+    """Disconnette il container leader dalla rete."""
     if not DOCKER_AVAILABLE:
         raise RuntimeError("Docker SDK non disponibile. Installa: pip install docker")
     client = docker_sdk.from_env()
     t_partition = time.time()
     container = client.containers.get(container_name)
 
-    # Disconnette il container da tutte le sue reti Docker
+    # Disconnette container
     partitioned_networks = []
     for net_name, net_info in container.attrs.get("NetworkSettings", {}).get("Networks", {}).items():
         try:
@@ -325,12 +275,12 @@ def stop_leader_container(container_name: str) -> float:
             print(f"  [PARTITION] Container '{container_name}' disconnesso dalla rete '{net_name}'")
         except Exception as e:
             print(f"  [WARN] Impossibile disconnettere da '{net_name}': {e}")
-            # Fallback: SIGKILL se la disconnessione di rete fallisce
+            # Fallback SIGKILL
             container.stop(timeout=0)
             print(f"  [FALLBACK] Container '{container_name}' fermato via SIGKILL")
 
     if not partitioned_networks:
-        # Nessuna rete trovata, usa SIGKILL come fallback
+        # Fallback SIGKILL
         container.stop(timeout=0)
         print(f"  [FALLBACK] Container '{container_name}' fermato via SIGKILL (nessuna rete trovata)")
 
@@ -338,19 +288,19 @@ def stop_leader_container(container_name: str) -> float:
     print(f"  [PARTITION] Leader '{container_name}' isolato ma ancora in esecuzione")
     print(f"  [PARTITION] I follower avvieranno elezione Raft dopo heartbeat timeout")
 
-    # Salva le reti partizionate per il ripristino
+    # Salva reti
     stop_leader_container._partitioned_networks = {container_name: partitioned_networks}
     return t_partition
 
 
 def restart_leader_container(container_name: str):
-    """Ripristina la connettività di rete del container precedentemente partizionato."""
+    """Riconnette il container."""
     if not DOCKER_AVAILABLE:
         return
     client = docker_sdk.from_env()
     try:
         container = client.containers.get(container_name)
-        # Riconnette il container alle reti da cui era stato disconnesso
+        # Riconnette alle reti
         partitioned = getattr(stop_leader_container, '_partitioned_networks', {}).get(container_name, [])
         if partitioned:
             for net_name in partitioned:
@@ -361,7 +311,7 @@ def restart_leader_container(container_name: str):
                 except Exception as e:
                     print(f"  [WARN] Impossibile riconnettere a '{net_name}': {e}")
         else:
-            # Fallback: riavvia il container se era stato fermato via SIGKILL
+            # Riavvia container
             container.start()
             print(f"  [START] Container '{container_name}' riavviato (fallback SIGKILL).")
     except Exception as e:
@@ -369,13 +319,7 @@ def restart_leader_container(container_name: str):
 
 
 def measure_failover(driver, t_crash: float, max_wait: float = POST_STOP_MAX) -> dict:
-    """
-    Dopo il crash del leader, sonda periodicamente il cluster finché le
-    scritture non riprendono (nuovo leader eletto). Restituisce:
-      - t_first_failure_ms: ms dall'inizio del test alla prima write fallita
-      - t_recovery_ms:      ms dal crash al ripristino delle scritture
-      - downtime_ms:        durata dell'indisponibilità delle scritture
-    """
+    """Dopo il crash del leader, sonda periodicamente il cluster finché le scritture non riprendono (nuovo leader eletto)"""
     probe_interval = 0.2   # 200 ms tra un tentativo e il successivo
     t_start = time.time()
     t_first_ok = None
@@ -387,7 +331,7 @@ def measure_failover(driver, t_crash: float, max_wait: float = POST_STOP_MAX) ->
         t0 = time.perf_counter()
         try:
             with driver.session() as s:
-                # Scrittura leggera: aggiorna un nodo di test noto
+                # Esegue scrittura di test
                 s.run(
                     "MERGE (x:_FailoverProbe {id: 1}) "
                     "SET x.ts = $ts",
@@ -428,13 +372,13 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
         return {"fault_tolerance": {"skipped": True, "reason": "docker SDK mancante"}}
 
     if not LEADER_CONTAINER_NAME:
-        # Fallback: usa il primo core come leader presunto
+        # Seleziona leader fallback
         LEADER_CONTAINER_NAME = "neo4j-core1"
         print(f"  [WARN] Leader non rilevato automaticamente, uso '{LEADER_CONTAINER_NAME}'")
 
     target_id = person_ids[0]
 
-    # Pulisci eventuale nodo probe precedente
+    # Elimina nodo probe se esiste
     try:
         with driver.session() as s:
             s.run("MATCH (x:_FailoverProbe) DETACH DELETE x").consume()
@@ -445,11 +389,11 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
     print(f"  Target Person ID : {target_id}")
     print(f"  Leader da fermare: {LEADER_CONTAINER_NAME}")
 
-    # Avvia i writer
+    # Avvia i thread di scrittura
     workers = [WriterWorker(driver, target_id) for _ in range(WRITE_THREADS)]
     threads = [threading.Thread(target=w.run, daemon=True) for w in workers]
     
-    # Crea un Reader worker speciale per il downtime
+    # Avvia reader
     downtime_reader = ReaderWorker(driver, person_ids)
     downtime_reader_thread = threading.Thread(target=downtime_reader.run, daemon=True)
     
@@ -457,10 +401,10 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
         t.start()
     downtime_reader_thread.start()
 
-    # Fase stabile pre-crash
+    # Attesa
     time.sleep(WRITE_DURATION)
 
-    # Conta le scritture nella fase stabile
+    # Conta scritture valide
     t_pre_crash = time.time()
     pre_crash_writes = sum(
         1 for w in workers
@@ -469,14 +413,14 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
     )
     print(f"\n  Scritture andate a buon fine prima del crash: {pre_crash_writes}")
 
-    # ---- CRASH ----
+    # Crash
     sub_banner("Fase B – Crash del Leader Raft (SIGKILL)")
     t_crash = stop_leader_container(LEADER_CONTAINER_NAME)
 
-    # Aspetta qualche secondo che i failure si propaghino ai worker
+    # Attesa propagazione failure
     time.sleep(1.0)
 
-    # Conta gli errori immediatamente post-crash
+    # Rileva errori
     post_crash_errors = sum(
         1 for w in workers
         for ts, ok, _ in w.records
@@ -484,11 +428,11 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
     )
     print(f"  Errori di scrittura post-crash (prime misurazioni): {post_crash_errors}")
 
-    # ---- FAILOVER PROBE ----
+    # Failover probe
     sub_banner("Fase C – Misura del Downtime e Rielezione Raft")
     failover = measure_failover(driver, t_crash)
 
-    # Ferma i writer e il reader
+    # Ferma i writer e reader
     for w in workers:
         w.stop()
     downtime_reader.stop()
@@ -496,7 +440,7 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
         t.join(timeout=5)
     downtime_reader_thread.join(timeout=5)
 
-    # Analisi delle registrazioni dei writer
+    # Estrae le registrazioni
     all_records = [(ts, ok, lat) for w in workers for ts, ok, lat in w.records]
     all_records.sort(key=lambda x: x[0])
 
@@ -506,7 +450,7 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
     write_lats_ok  = [lat for _, ok, lat in all_records if ok]
     write_lats_err = [lat for _, ok, lat in all_records if not ok]
 
-    # Stima prima scrittura fallita (relativa al crash)
+    # Stima tempo di fallimento
     first_fail_ts = next((ts for ts, ok, _ in all_records if not ok and ts >= t_crash), None)
     t_first_failure_ms = (first_fail_ts - t_crash) * 1000.0 if first_fail_ts else None
 
@@ -544,10 +488,10 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
     print_stats("Latenza scritture OK    ", write_stats_ok)
     print_stats("Latenza scritture FAILED", write_stats_err)
 
-    # Riavvia il container abbattuto (per non lasciare il cluster degradato)
+    # Ripristina container
     sub_banner("Fase D – Ripristino del nodo (per cleanup)")
     restart_leader_container(LEADER_CONTAINER_NAME)
-    # Attesa generosa: il container deve avviare la JVM e fare rejoin nel cluster
+    # Attesa rejoin
     print(f"  Attendo che {LEADER_CONTAINER_NAME} ritorni online (Probe Bolt)...")
     uri_to_probe = NODE_URIS.get(LEADER_CONTAINER_NAME)
     for _ in range(60):
@@ -562,7 +506,7 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
         print("  [WARN] Timeout attesa riavvio nodo.")
     print("  [OK] Cluster ripristinato.")
 
-    # Pulisci il nodo probe
+    # Elimina probe
     try:
         with driver.session() as s:
             s.run("MATCH (x:_FailoverProbe) DETACH DELETE x").consume()
@@ -589,7 +533,7 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
             "cap_profile":            "CP",
             "write_latency_ok_ms":    write_stats_ok,
             "write_latency_error_ms": write_stats_err,
-            # Timeline eventi per il grafico
+            # Dati timeline
             "timeline": {
                 "t_crash_abs":       t_crash,
                 "t_recovery_abs":    t_crash + failover["t_recovery_s"] if failover["t_recovery_s"] else None,
@@ -600,16 +544,10 @@ def run_fault_tolerance_test(driver, person_ids: list[int]) -> dict:
     }
 
 
-# TEST 3.3 - SCALABILITÀ E CAUSAL CONSISTENCY
+# TEST 3.3 - Scalabilità e causal consistency
 
 class ReaderWorker:
-    """
-    Worker che esegue query di navigazione in lettura via routing neo4j://.
-    Registra il nome del server che ha servito la richiesta per verificare
-    la distribuzione del carico.
-    Il campo `bookmark` (se non None) forza Causal Consistency: il driver
-    aspetta che il secondario abbia applicato il log fino al punto indicato.
-    """
+    """Thread lettore per test scalabilità e causal consistency."""
     def __init__(self, driver, person_ids: list[int], bookmark=None):
         self.driver     = driver
         self.person_ids = person_ids
@@ -632,7 +570,7 @@ class ReaderWorker:
                         pid=pid
                     )
                     rows = list(result)
-                    # Recupera il nome del server che ha servito la query
+                    # Recupera nome server
                     server_info = result.consume().server
                     server_addr = getattr(server_info, "address", "unknown")
                 t1 = time.perf_counter()
@@ -651,11 +589,7 @@ class ReaderWorker:
 
 
 def write_and_get_bookmark(driver, person_ids: list[int]) -> tuple[str | None, str]:
-    """
-    Esegue una scrittura e restituisce il bookmark prodotto dalla transazione.
-    Usato per verificare che la lettura successiva su un secondario asincrono
-    rispetti la Causal Consistency (il lettore vede sempre le proprie scritture).
-    """
+    """Esegue scrittura e restituisce il bookmark."""
     pid = person_ids[0]
     marker_value = int(time.time())
 
@@ -668,7 +602,7 @@ def write_and_get_bookmark(driver, person_ids: list[int]) -> tuple[str | None, s
                 )
                 tx.commit()
             bookmark = s.last_bookmarks()
-        # bookmark è un neo4j.Bookmarks object
+        # Converte bookmark a stringa
         bookmark_str = str(bookmark)
         return bookmark, marker_value
     except Exception as e:
@@ -679,11 +613,7 @@ def write_and_get_bookmark(driver, person_ids: list[int]) -> tuple[str | None, s
 def verify_causal_consistency(driver, person_ids: list[int],
                                bookmark, expected_val: int,
                                n_checks: int = 20) -> dict:
-    """
-    Esegue n_checks letture su nodi READ (secondari), forzando la Causal
-    Consistency tramite Bookmark. Verifica che il valore scritto sia sempre
-    visibile (stale read = 0).
-    """
+    """Esegue test causal consistency."""
     pid = person_ids[0]
     stale_reads   = 0
     correct_reads = 0
@@ -724,7 +654,7 @@ def run_read_scalability_test(driver, person_ids: list[int]) -> dict:
     banner("TEST 3.3 – Scalabilità in Lettura e Causal Consistency")
     results = {}
 
-    # ---- Fase A: causal consistency via bookmark ----
+    # Verifica causal consistency
     sub_banner("Fase A – Causal Consistency (Bookmark Write-then-Read)")
     print(f"  Eseguo una scrittura e verifico la visibilità su nodi secondari...")
 
@@ -742,7 +672,7 @@ def run_read_scalability_test(driver, person_ids: list[int]) -> dict:
           f"{'✅ (atteso: 0)' if cc_result['stale_reads'] == 0 else '⚠️ Stale reads rilevate!'}")
     print_stats("    Overhead Bookmark (latenza lettura)", cc_result["bookmark_lat"])
 
-    # Pulizia marker
+    # Rimuove marker
     try:
         with driver.session() as s:
             s.run(
@@ -754,7 +684,7 @@ def run_read_scalability_test(driver, person_ids: list[int]) -> dict:
 
     results["causal_consistency"] = cc_result
 
-    # ---- Fase B: throughput e distribuzione del carico ----
+    # Carico throughput
     sub_banner(f"Fase B – Throughput & Load Balancing ({READ_THREADS} thread × {READ_DURATION}s)")
     print(f"  Carico di {READ_THREADS} thread reader via routing neo4j:// ...")
 
@@ -772,14 +702,14 @@ def run_read_scalability_test(driver, person_ids: list[int]) -> dict:
     for t in threads:
         t.join(timeout=5)
 
-    # Aggrega tutti i record
+    # Aggrega record
     all_recs = [(addr, lat, ok) for w in workers for addr, lat, ok in w.records]
     total_queries = len(all_recs)
     success_count = sum(1 for _, _, ok in all_recs if ok)
     elapsed       = t_end - t_start
     qps           = success_count / elapsed if elapsed > 0 else 0
 
-    # Distribuzione per server (load balancing)
+    # Calcola load balancing
     server_counts: dict[str, int] = defaultdict(int)
     server_lats:   dict[str, list] = defaultdict(list)
     for addr, lat, ok in all_recs:
@@ -822,9 +752,7 @@ def run_read_scalability_test(driver, person_ids: list[int]) -> dict:
     return results
 
 
-# ===========================================================================
-# MAIN
-# ===========================================================================
+# Main
 
 def main():
     print(f"\n{'#' * 70}")
@@ -833,7 +761,7 @@ def main():
     print(f"#  Cluster: 3 primari + 2 secondari | neo4j://localhost:7687")
     print(f"{'#' * 70}")
 
-    # Connessione
+    # Connessione al cluster
     print("\n[*] Connessione al cluster Neo4j via routing neo4j://...")
     try:
         driver = get_driver(CLUSTER_URI)
@@ -845,7 +773,7 @@ def main():
         print("    NEO4J_ACCEPT_LICENSE_AGREEMENT=yes docker compose -f infrastructure/docker-compose-cluster.yml up -d")
         sys.exit(1)
 
-    # Lista Person
+    # Recupera i nodi Person
     with driver.session() as s:
         res = s.run("MATCH (p:Person) RETURN p.id AS id ORDER BY p.id")
         person_ids = [r["id"] for r in res]
@@ -866,7 +794,7 @@ def main():
 
     random.seed(42)
 
-    # Warm-up
+    # Esegue warm-up
     print("\n[*] Warm-up connessioni Bolt...")
     for _ in range(N_WARMUP):
         with driver.session() as s:
@@ -875,20 +803,19 @@ def main():
 
     all_results = {}
 
-    # ---- TEST 3.1 ----
+    # Test 3.1
     r31 = run_cluster_info_test(driver)
     all_results["cluster_info"] = r31
 
-    # ---- TEST 3.2 ----
+    # Test 3.2
     r32 = run_fault_tolerance_test(driver, person_ids)
     all_results.update(r32)
 
-    # ---- TEST 3.3 ----
-    # Chiude il driver precedente (che potrebbe avere la routing table corrotta
-    # dopo il crash del leader in 3.2) e ne apre uno fresco.
+    # Test 3.3
+    # Chiude driver
     driver.close()
     
-    # Attendiamo un tempo sufficiente affinché il cluster aggiorni la topology
+    # Attende topology
     print("\n[*] Attesa 20s per assestamento routing table del cluster...")
     time.sleep(20)
     
@@ -915,7 +842,7 @@ def main():
     else:
         r33 = {}
 
-    # ---- RIEPILOGO FINALE ----
+    # Riepilogo finale
     banner("RIEPILOGO FINALE – Scenario 3")
 
     ci  = all_results.get("cluster_info", {})
@@ -949,7 +876,7 @@ def main():
     bm_lat = cc.get("bookmark_lat", {})
     print(f"  Overhead Bookmark medio : {bm_lat.get('mean_ms', 'N/A')} ms")
 
-    # Salvataggio JSON
+    # Salva in JSON
     import os
     output_dir  = os.path.dirname(os.path.abspath(__file__))
     output_path = os.path.join(output_dir, "results.json")

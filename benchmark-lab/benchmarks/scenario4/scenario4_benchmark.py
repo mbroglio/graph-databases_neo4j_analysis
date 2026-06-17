@@ -15,9 +15,7 @@ import io
 import threading
 from datetime import datetime
 
-# ---------------------------------------------------------------------------
-# Dipendenze – installazione automatica se mancanti
-# ---------------------------------------------------------------------------
+# Verifica dipendenze
 try:
     import psycopg2
     import psycopg2.extras
@@ -36,9 +34,7 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "neo4j"])
     from neo4j import GraphDatabase
 
-# ---------------------------------------------------------------------------
-# Configurazione connessioni
-# ---------------------------------------------------------------------------
+# Parametri connessioni
 NEO4J_URI      = "bolt://localhost:7687"
 NEO4J_USER     = "neo4j"
 NEO4J_PASSWORD = "password"
@@ -49,27 +45,18 @@ PG_DB   = "ldbcsnb"
 PG_USER = "postgres"
 PG_PASS = "mysecretpassword"
 
-# ---------------------------------------------------------------------------
 # Parametri benchmark
-# ---------------------------------------------------------------------------
 N_RUNS   = 30   # ripetizioni per ogni query (escluso il test 4.3)
 N_WARMUP = 20   # esecuzioni di warm-up (JIT compilation JVM)
 
-# Bulk Insert (4.2)
+# Bulk Insert
 BULK_INSERT_RECORDS = 50_000   # record da inserire (anagrafica piatta senza relazioni)
 BULK_BATCH_SIZE     = 1_000    # dimensione batch per Neo4j CREATE
 
-# Explosion test (4.3)
-# Il timeout è impostato per prevenire Out-Of-Memory (OOM).
-# Su SF1, la query [*1..6] senza filtri topologici esplora miliardi di percorsi,
-# causando la saturazione della JVM e l'arresto anomalo del container. Un limite di 300s permette di
-# rilevare il degrado prestazionale senza compromettere la stabilità del sistema.
-# Su SF 0.1 la query può completare in ~10-20s anche senza questo limite.
+# Timeout esplosione per prevenire eccezioni Out-Of-Memory
 EXPLOSION_TIMEOUT_S = 300      # secondi massimi per la query non filtrata (OOM protection)
 
-# ---------------------------------------------------------------------------
 # Utility
-# ---------------------------------------------------------------------------
 
 
 def banner(title: str):
@@ -83,7 +70,7 @@ def sub_banner(title: str):
 
 
 def measure_ms(fn, *args, **kwargs):
-    """Esegue fn(*args, **kwargs) e restituisce (risultato, latenza_ms)."""
+    """Misura il tempo di esecuzione di una funzione."""
     t0 = time.perf_counter()
     result = fn(*args, **kwargs)
     t1 = time.perf_counter()
@@ -91,7 +78,7 @@ def measure_ms(fn, *args, **kwargs):
 
 
 def compute_stats(times_ms: list[float]) -> dict:
-    """Calcola le statistiche di latenza su una lista di misurazioni."""
+    """Calcola le statistiche di latenza"""
     if not times_ms:
         return {}
     sorted_t = sorted(times_ms)
@@ -120,7 +107,7 @@ def print_stats(label: str, stats: dict):
     print(f"    Max        : {stats['max_ms']:>10.3f} ms")
 
 
-# CONNESSIONI
+# Connessioni
 
 
 def get_neo4j_driver():
@@ -133,21 +120,11 @@ def get_pg_conn():
     )
 
 
-# TEST 4.1 - FULL-TABLE SCAN
-# Query: lunghezza media dei testi di tutti i Post/Comment, raggruppati per browser.
-# - PostgreSQL: Sequential Scan parallelo su blocchi di memoria contigui.
-# - Neo4j:      scansione dei nodi sparsi nello store → cache miss continui.
-#
-# NOTE IMPLEMENTATIVA:
-#   Lo schema LDBC SNB usa la tabella `message` che unifica Post e Comment.
-#   Su Neo4j l'equivalente è il label :Post (che contiene la proprietà
-#   `browserUsed` e `content`). I Comment LDBC non hanno `browserUsed` nel
-#   dataset SF 0.1, quindi si confronta la stessa porzione di dati.
-# ===========================================================================
+# TEST 4.1 - Full-Table Scan
 
 
 def neo4j_global_aggregation(session) -> list:
-    """Lunghezza media dei contenuti per browser (tutti i Post)."""
+    """Esegue aggregazione globale su Neo4j."""
     cypher = """
     MATCH (m:Post)
     WHERE m.browserUsed IS NOT NULL AND m.content IS NOT NULL
@@ -161,7 +138,7 @@ def neo4j_global_aggregation(session) -> list:
 
 
 def pg_global_aggregation(conn) -> list:
-    """Equivalente SQL: AVG(LENGTH(content)) GROUP BY browserUsed su Post."""
+    """Esegue aggregazione globale su PostgreSQL."""
     sql = """
     SELECT m_browserused   AS browser,
            AVG(LENGTH(m_content::text)) AS avg_len,
@@ -194,7 +171,7 @@ def run_global_aggregation_test(neo4j_driver, pg_conn) -> dict:
         pg_global_aggregation(pg_conn)
     print("  [OK] Warm-up completato")
 
-    # --- Neo4j ---
+    # Neo4j
     sub_banner("Neo4j – scansione nodi Post")
     neo4j_times = []
     neo4j_result = None
@@ -205,7 +182,7 @@ def run_global_aggregation_test(neo4j_driver, pg_conn) -> dict:
             neo4j_result = res
             print(f"  Run {i+1:2d}: {ms:.3f} ms")
 
-    # --- PostgreSQL ---
+    # PostgreSQL
     sub_banner("PostgreSQL – Sequential Scan")
     pg_times = []
     pg_result = None
@@ -229,7 +206,7 @@ def run_global_aggregation_test(neo4j_driver, pg_conn) -> dict:
     print(f"\n  >>> Speedup PostgreSQL vs Neo4j: {speedup_pg_vs_neo4j}x")
     print(f"  (PostgreSQL è {speedup_pg_vs_neo4j}x più veloce di Neo4j su questa query)")
 
-    # Mostra campione risultato per validazione
+    # Mostra risultato
     if neo4j_result:
         print(f"\n  Campione risultato Neo4j (prime 3 righe):")
         for row in neo4j_result[:3]:
@@ -248,29 +225,7 @@ def run_global_aggregation_test(neo4j_driver, pg_conn) -> dict:
     }
 
 
-# TEST 4.2 - BULK INSERT
-# Confronto tra due modalità di ingestione di massa:
-#   - PostgreSQL: COPY da buffer in-memory (bulk load nativo, bypass WAL parziale)
-#   - Neo4j:      batch CREATE con UNWIND (inserimento transazionale batch)
-#
-# NOTA METODOLOGICA IMPORTANTE:
-# Questo confronto è intenzionalmente asimmetrico e viene presentato come tale.
-# PostgreSQL COPY è un'operazione di bulk load non-transazionale (bypass del WAL)
-# progettata per il massimo throughput di ingestione. Il corrispettivo perfetto
-# in Neo4j sarebbe lo strumento `neo4j-admin database import`, che bypassa
-# anch'esso le transazioni e carica in modalità offline.
-# Questo test confronta invece COPY (bulk load) con UNWIND+CREATE (inserimento
-# transazionale batch) per evidenziare un limite strutturale reale di Neo4j:
-# l'overhead dell'allocazione delle strutture dati per i puntatori degli archi
-# anche in assenza di relazioni logiche. Questo overhead esiste in qualsiasi
-# modalità di inserimento Neo4j, incluso neo4j-admin.
-# Il capitolo è pertanto intitolato "Inserimento Batch Transazionale vs Bulk Load"
-# per riflettere accuratamente la natura del confronto.
-#
-# Vengono creati nodi "BenchmarkRecord" fittizi con proprietà scalari:
-#   id (int), name (string), score (float), created_at (string)
-# I record vengono eliminati al termine del test per preservare l'integrità del database.
-# ===========================================================================
+# TEST 4.2 - Bulk Insert
 
 _ADJECTIVES = [
     "fast", "slow", "bright", "dark", "sharp", "soft", "hard", "warm",
@@ -283,7 +238,7 @@ _NOUNS = [
 
 
 def _generate_bulk_records(n: int) -> list[dict]:
-    """Genera n record fittizi per il bulk insert."""
+    """Genera record di benchmark."""
     rng = random.Random(12345)
     return [
         {
@@ -297,10 +252,7 @@ def _generate_bulk_records(n: int) -> list[dict]:
 
 
 def neo4j_bulk_insert(driver, records: list[dict]) -> int:
-    """
-    Bulk insert tramite UNWIND + CREATE in batch.
-    Restituisce il numero di nodi creati.
-    """
+    """Inserisce i record in Neo4j."""
     total = 0
     with driver.session() as s:
         for start in range(0, len(records), BULK_BATCH_SIZE):
@@ -323,7 +275,7 @@ def neo4j_bulk_insert(driver, records: list[dict]) -> int:
 
 
 def neo4j_bulk_cleanup(driver):
-    """Rimuove tutti i nodi BenchmarkRecord creati dal test."""
+    """Rimuove i record in Neo4j."""
     with driver.session() as s:
         s.run(
             """
@@ -338,7 +290,7 @@ def neo4j_bulk_cleanup(driver):
 
 
 def neo4j_bulk_cleanup_no_apoc(driver):
-    """Fallback senza APOC: elimina in batch iterativi."""
+    """Rimuove i record in Neo4j (fallback)."""
     with driver.session() as s:
         while True:
             result = s.run(
@@ -355,13 +307,10 @@ def neo4j_bulk_cleanup_no_apoc(driver):
 
 
 def pg_bulk_insert(conn, records: list[dict]) -> int:
-    """
-    Bulk insert via COPY da buffer in-memory (massima efficienza PostgreSQL).
-    Usa una tabella temporanea per non inquinare lo schema LDBC.
-    """
+    """Inserisce i record in PostgreSQL."""
     cur = conn.cursor()
 
-    # Crea tabella temporanea per il test
+    # Crea tabella
     cur.execute("""
         CREATE TEMP TABLE IF NOT EXISTS benchmark_record (
             id          BIGINT PRIMARY KEY,
@@ -372,24 +321,24 @@ def pg_bulk_insert(conn, records: list[dict]) -> int:
     """)
     conn.commit()
 
-    # Costruisce il CSV in memoria
+    # Crea CSV
     buf = io.StringIO()
     writer = csv.writer(buf)
     for r in records:
         writer.writerow([r["id"], r["name"], r["score"], r["created_at"]])
     buf.seek(0)
 
-    # COPY da buffer in-memory
+    # COPY PostgreSQL
     cur.copy_from(buf, "benchmark_record",
                   columns=("id", "name", "score", "created_at"),
                   sep=",")
     conn.commit()
 
-    # Conta i record inseriti
+    # Conta risultati
     cur.execute("SELECT COUNT(*) FROM benchmark_record")
     total = cur.fetchone()[0]
 
-    # Cleanup: svuota la tabella temporanea
+    # Pulisce tabella
     cur.execute("TRUNCATE benchmark_record")
     conn.commit()
     cur.close()
@@ -412,7 +361,7 @@ def run_bulk_insert_test(neo4j_driver, pg_conn) -> dict:
     neo4j_inserted = 0
 
     for i in range(N_RUNS):
-        # Cleanup pre-run (nodi del run precedente)
+        # Pulisce DB
         try:
             neo4j_bulk_cleanup_no_apoc(neo4j_driver)
         except Exception:
@@ -427,7 +376,7 @@ def run_bulk_insert_test(neo4j_driver, pg_conn) -> dict:
         throughput = cnt / (ms / 1000.0) if ms > 0 else 0
         print(f"  Run {i+1:2d}: {ms:>10.1f} ms  |  {cnt:,} inseriti  |  {throughput:,.0f} rec/s")
 
-    # Cleanup finale Neo4j
+    # Pulisce DB
     print("  [*] Pulizia nodi BenchmarkRecord da Neo4j...")
     neo4j_bulk_cleanup_no_apoc(neo4j_driver)
     print("  [OK] Pulizia completata")
@@ -476,27 +425,11 @@ def run_bulk_insert_test(neo4j_driver, pg_conn) -> dict:
     }
 
 
-# TEST 4.3 - ESPLOSIONE DI CAMMINI
-# Dimostra il rischio di query Cypher mal ottimizzate su nodi ad alto
-# branching factor (super-nodi) senza vincoli di profondità espliciti.
-#
-# Struttura del test:
-#   A) Query non filtrata:  MATCH (p)-[*1..6]-(q) RETURN count(*)
-#      Eseguita sul nodo con il MASSIMO grado (super-nodo) → crescita
-#      esponenziale della frontiera → OOM / Timeout atteso.
-#   B) Query con filtri topologici:
-#      - Tipo di relazione esplicito [:KNOWS]
-#      - Limite di profondità ridotto (max 3 hop)
-#      - LIMIT sul risultato
-#      → risponde in tempi accettabili.
-#
-# L'esecuzione avviene in un thread isolato per consentire l'interruzione 
-# al superamento della soglia (timeout).
-# ===========================================================================
+# TEST 4.3 - Esplosione di cammini
 
 
 def neo4j_find_supernode(driver) -> tuple[int, int]:
-    """Trova il nodo Person con il massimo grado (super-nodo)."""
+    """Identifica il super-nodo."""
     with driver.session() as s:
         result = s.run("""
             MATCH (p:Person)
@@ -512,10 +445,7 @@ def neo4j_find_supernode(driver) -> tuple[int, int]:
 
 
 def _run_with_timeout(fn, timeout_s: float, *args, **kwargs):
-    """
-    Esegue fn(*args, **kwargs) in un thread separato con timeout.
-    Restituisce (result, elapsed_ms, timed_out: bool).
-    """
+    """Esegue funzione con timeout."""
     result_container = [None]
     exception_container = [None]
 
@@ -532,18 +462,13 @@ def _run_with_timeout(fn, timeout_s: float, *args, **kwargs):
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
     timed_out = t.is_alive()
-    # L'interruzione forzata del thread non è supportata dal GIL; il thread
-    # continuerà in background finché il driver non riceve l'eccezione dal server.
+    # Controlla timeout
     return result_container[0], elapsed_ms, timed_out, exception_container[0]
 
 
 def neo4j_explosion_query_unfiltered(driver, person_id: int) -> int:
-    """
-    Query non filtrata: tutti i cammini di lunghezza 1-6 da un super-nodo.
-    Nota: rischio di OOM / Timeout su nodi ad alto grado.
-    """
-    # La sessione viene gestita internamente per isolare eventuali eccezioni
-    # di timeout ed evitare anomalie nel thread principale.
+    """Esegue query non filtrata."""
+    # Gestione isolata della sessione
     with driver.session() as session:
         with session.begin_transaction(timeout=float(EXPLOSION_TIMEOUT_S)) as tx:
             result = tx.run(
@@ -558,11 +483,7 @@ def neo4j_explosion_query_unfiltered(driver, person_id: int) -> int:
 
 
 def neo4j_explosion_query_filtered(session, person_id: int) -> int:
-    """
-    Query con filtri topologici espliciti:
-      - solo relazioni KNOWS (tipo dichiarato)
-      - profondità identica (6 hop)
-    """
+    """Esegue query filtrata."""
     result = session.run(
         """
         MATCH (p:Person {id: $pid})-[:KNOWS*1..6]-(q:Person)
@@ -590,7 +511,7 @@ def run_explosion_test(neo4j_driver) -> dict:
     print(f"  Super-nodo: Person id={supernode_id}  grado={supernode_degree} vicini diretti")
     print(f"  Stima percorsi a 6 hop: ~{supernode_degree}^6 ≈ {supernode_degree**6:,} (ordine di grandezza)")
 
-    # ---- 4.3a: Query NON FILTRATA – eseguita 10 volte per solidità statistica ----
+    # Query non filtrata
     sub_banner(f"4.3a – Query NON FILTRATA: MATCH (p)-[*1..6]-(q)  [timeout={EXPLOSION_TIMEOUT_S}s]")
     print("  Nota: potenziale saturazione della memoria e rischio di OOM/Timeout.")
     print(f"  Eseguita 1 volta a causa dell'impatto atteso sui tempi di esecuzione.\n")
@@ -654,7 +575,7 @@ def run_explosion_test(neo4j_driver) -> dict:
         "outcome":          unfiltered_outcome,
     }
 
-    # ---- 4.3b: Query CON FILTRI TOPOLOGICI ----
+    # Query filtrata
     sub_banner("4.3b – Query CON FILTRI: [:KNOWS*1..6] (tipo esplicito)")
     print("  Stessa semantica e stessa profondità, ma con vincoli espliciti che limitano la frontiera.\n")
 
@@ -680,7 +601,7 @@ def run_explosion_test(neo4j_driver) -> dict:
         "stats":         filtered_stats,
     }
 
-    # ---- Confronto riepilogativo ----
+    # Riepilogo
     print()
     print(f"  {'Variante':<30} {'Esito':<25} {'Tempo (ms)'}")
     print(f"  {'-'*70}")
@@ -694,7 +615,7 @@ def run_explosion_test(neo4j_driver) -> dict:
     return results
 
 
-# MAIN
+# Main
 
 
 def main():
@@ -704,7 +625,7 @@ def main():
     print(f"#  Configurazione: SF (rilevamento in corso...) | N_RUNS={N_RUNS} | WARMUP={N_WARMUP}")
     print(f"{'#' * 70}")
 
-    # Connessioni
+    # Connessioni ai DB
     print("\n[*] Connessione ai database...")
     try:
         neo4j_driver = get_neo4j_driver()
@@ -722,7 +643,7 @@ def main():
         print(f"  [ERR] PostgreSQL: {e}")
         sys.exit(1)
 
-    # Conta i Person e rileva il Scale Factor
+    # Conta dataset
     with neo4j_driver.session() as _s:
         _n_persons_total = _s.run("MATCH (p:Person) RETURN count(p) AS n").single()["n"]
     if _n_persons_total < 2_000:
@@ -735,25 +656,25 @@ def main():
     print(f"\n[*] {_n_persons_total} Person trovati nel grafo (SF rilevato: {detected_sf})")
     print(f"#  Configurazione: SF {detected_sf} | N_RUNS={N_RUNS} | WARMUP={N_WARMUP}")
 
-    # Seed per riproducibilità
+    # Inizializza PRNG per generazione dati sintetici (test 4.2)
     random.seed(42)
 
     all_results = {}
 
-    # ---- TEST 4.1 ----
+    # Test 4.1
     all_results["test_4_1_global_aggregation"] = run_global_aggregation_test(
         neo4j_driver, pg_conn
     )
 
-    # ---- TEST 4.2 ----
+    # Test 4.2
     all_results["test_4_2_bulk_insert"] = run_bulk_insert_test(
         neo4j_driver, pg_conn
     )
 
-    # ---- TEST 4.3 ----
+    # Test 4.3
     all_results["test_4_3_explosion"] = run_explosion_test(neo4j_driver)
 
-    # ---- RIEPILOGO FINALE ----
+    # Riepilogo finale
     banner("RIEPILOGO FINALE – Scenario 4: I Punti Deboli di Neo4j")
 
     t41 = all_results["test_4_1_global_aggregation"]
@@ -785,11 +706,11 @@ def main():
     print("-" * 78)
     print(f"{'4.3 Esplosione combinatoria':<35} {str(unf_ms)+'ms':<20} {str(flt_ms):<20} {unf_out}")
 
-    # Throughput riepilogo 4.2
+    # Mostra throughput 4.2
     print(f"\n  [4.2] Throughput Neo4j:      {t42.get('neo4j_throughput_rps', 'N/A'):,.0f} record/s")
     print(f"  [4.2] Throughput PostgreSQL: {t42.get('pg_throughput_rps', 'N/A'):,.0f} record/s")
 
-    # Salvataggio JSON
+    # Salva risultati in JSON
     output_dir  = os.path.dirname(os.path.abspath(__file__))
     output_path = os.path.join(output_dir, "results.json")
 

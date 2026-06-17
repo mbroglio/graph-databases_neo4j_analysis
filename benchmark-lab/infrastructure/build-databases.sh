@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Define paths
+# Imposta directory
 LAB_DIR=$(pwd)
 SCALE_FACTOR="${SCALE_FACTOR:-0.1}"
 
@@ -12,7 +12,7 @@ NEO4J_TARGET_DIR="$LAB_DIR/data/neo4j-sf${SCALE_FACTOR}"
 POSTGRES_TARGET_DIR="$LAB_DIR/data/postgres-sf${SCALE_FACTOR}"
 LDBC_PG_SCRIPTS="$LAB_DIR/ldbc_snb_interactive_impls/postgres/scripts"
 
-# Creazione directory dati
+# Crea directory
 mkdir -p "$NEO4J_TARGET_DIR"
 mkdir -p "$POSTGRES_TARGET_DIR"
 
@@ -21,14 +21,14 @@ RAW_DATA_DIR="$RAW_DATA_DIR" python3 patch_headers.py
 echo "Patch degli header completata."
 
 echo "Importazione in Neo4j..."
-# Cartella degli header sulla nostra macchina
+# Imposta percorso header
 HEADER_DIR_HOST="$(dirname "$RAW_DATA_DIR")/headers"
 
-# Variabili per neo4j-admin
+# Variabili configurazione neo4j-admin
 NODE_ARGS=""
 REL_ARGS=""
 
-# Generazione argomenti tramite script Python per superare i limiti di bash
+# Genera parametri
 ARGS=$(python3 -c "
 import os
 raw_dir = '$RAW_DATA_DIR'
@@ -43,7 +43,7 @@ for sub in ['dynamic', 'static']:
     if not os.path.exists(d): continue
     for name in os.listdir(d):
         if '_' in name:
-            label = name.split('_')[1].upper() # Simplified label
+            label = name.split('_')[1].upper() # Estrae label
             if 'knows' in name.lower(): label = 'KNOWS'
             elif 'likes' in name.lower(): label = 'LIKES'
             elif 'hascreator' in name.lower(): label = 'HAS_CREATOR'
@@ -93,7 +93,7 @@ python3 postgres_prep.py
 
 cd "$LDBC_PG_SCRIPTS"
 
-# Pulizia vecchia directory dati Postgres
+# Pulisce directory
 echo "Pulizia directory Postgres..."
 docker run --rm \
   -v "$(dirname "$POSTGRES_TARGET_DIR")":/pgdata \
@@ -101,14 +101,14 @@ docker run --rm \
   rm -rf "/pgdata/$(basename "$POSTGRES_TARGET_DIR")"
 mkdir -p "$POSTGRES_TARGET_DIR"
 
-# Ripristino di vars.sh al valore di default
+# Ripristina vars.sh
 git checkout -- vars.sh
 
-# Iniezione dei percorsi customizzati
+# Inserisce percorsi
 echo "export POSTGRES_CSV_DIR=\"$PG_CSV_DIR/\"" >> vars.sh
 echo "export POSTGRES_DATA_DIR=\"$POSTGRES_TARGET_DIR\"" >> vars.sh
 
-# Esecuzione degli script di avvio LDBC
+# Esegue script
 ./start.sh
 ./load-in-one-step.sh
 ./stop.sh

@@ -1,19 +1,4 @@
-# Makefile per automatizzare l'esecuzione dei test per la tesina.
-#
-# IMPORTANTE: i container di Postgres e Neo4j devono essere già up
-# (devono essere avviati tramite il Makefile in infrastructure/).
-#
-# Comandi principali:
-#   make scenario1   – Esecuzione Scenario 1
-#   make scenario2   – Esecuzione Scenario 2 (ACID)
-#   make scenario3   – Avvio cluster Raft ed esecuzione Scenario 3
-#   make scenario4   – Esecuzione Scenario 4
-#
-# Lo Scale Factor (SF) viene rilevato automaticamente e i risultati sono salvati nelle
-# directory separate archive_SF0.1 o archive_SF1 per evitare sovrascritture.
-#
-# Per cambiare dataset:
-#   cd ../infrastructure && make reset SF=1 (oppure 0.1)
+# Makefile benchmark
 
 .PHONY: help scenario1 scenario2 scenario3 scenario4 query-plans wait-db scenario3-teardown
 
@@ -36,9 +21,7 @@ help:
 	@echo "  make scenario3-teardown  Terminazione del cluster e pulizia in caso di errore"
 	@echo ""
 
-# Scenario 1 - Potenza del Grafo
-# (Multi-hop, Triangle Detection, Shortest Path)
-# La query a 4 hop presenta tempi elevati; è mantenuta per evidenziare il degrado prestazionale.
+# Target scenario1
 scenario1:
 	@echo "========================================================"
 	@echo "  Scenario 1: La Potenza del Grafo"
@@ -47,8 +30,7 @@ scenario1:
 	python3 scenario1/plot_scenario1.py
 	./archive_results.sh scenario1
 
-# Scenario 2 - Transazioni e Concorrenza
-# (Read Committed, Lost Update, Deadlock). Durata stimata: circa 2 minuti.
+# Target scenario2
 scenario2: wait-db
 	@echo "========================================================"
 	@echo "  Scenario 2: Transazioni e Concorrenza"
@@ -57,8 +39,7 @@ scenario2: wait-db
 	python3 scenario2/scenario2_wal.py
 	./archive_results.sh scenario2
 
-# Scenario 3 - Sistemi distribuiti
-# Lancia il cluster Raft e testa fault tolerance (spengendo nodi) e causal consistency.
+# Target scenario3
 scenario3:
 	@echo "========================================================"
 	@echo "  Scenario 3: Sistemi Distribuiti / Teorema CAP"
@@ -66,9 +47,7 @@ scenario3:
 	bash scenario3/run_scenario3.sh
 	./archive_results.sh scenario3
 
-# Scenario 4 - Punti deboli di Neo4j
-# (Aggregazioni globali, Bulk Insert, esplorazione di path non filtrati).
-# È presente un timeout per prevenire OOM del container.
+# Target scenario4
 scenario4: wait-db
 	@echo "========================================================"
 	@echo "  Scenario 4: I Punti Deboli di Neo4j"
@@ -76,8 +55,7 @@ scenario4: wait-db
 	python3 scenario4/scenario4_benchmark.py
 	./archive_results.sh scenario4
 
-# Funzione helper per aspettare che i DB single instance tornino up
-# (necessario dopo il test del cluster Raft)
+# Target wait-db
 wait-db:
 	@echo "[wait-db] Verifico che i DB single-instance siano in esecuzione..."
 	@if ! docker inspect neo4j-benchmark >/dev/null 2>&1; then \
@@ -111,8 +89,7 @@ wait-db:
 	echo ""
 	@echo "[wait-db] OK: Neo4j e PostgreSQL pronti."
 
-# Helper per l'interruzione forzata del cluster in caso di anomalie
-# e ripristino delle istanze singole
+# Target scenario3-teardown
 scenario3-teardown:
 	@echo "[teardown] Abbatto il cluster Raft (se attivo)..."
 	@docker compose -f ../infrastructure/docker-compose-cluster.yml down -v 2>/dev/null || true
@@ -124,7 +101,7 @@ scenario3-teardown:
 	SCALE_FACTOR="$${SF}" docker compose -f ../infrastructure/docker-compose.yml up -d 2>/dev/null || true
 	@$(MAKE) wait-db
 
-# Estrazione dei Query Plan (salva l'appendice)
+# Target query-plans
 query-plans:
 	@echo "Collecting Query Plans (EXPLAIN / PROFILE)..."
 	python3 collect_query_plans.py

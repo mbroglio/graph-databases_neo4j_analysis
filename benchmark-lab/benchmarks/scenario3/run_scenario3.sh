@@ -13,7 +13,7 @@
 
 set -e # Interrompe lo script in caso di errore
 
-# Riposizionamento nella root directory del progetto
+# Imposta directory
 cd "$(dirname "$0")/../../"
 
 # Colori per l'output
@@ -26,9 +26,9 @@ echo -e "${GREEN}===============================================================
 echo -e "${GREEN}  AVVIO AUTOMATIZZATO SCENARIO 3 - NEO4J CLUSTER RAFT${NC}"
 echo -e "${GREEN}======================================================================${NC}\n"
 
-# Rilevamento dello SCALE_FACTOR per corretta reinizializzazione volumi in fase di cleanup.
+# Rileva scale factor
 detect_scale_factor() {
-    # Analisi dei volumi montati su neo4j-benchmark
+    # Analizza volumi neo4j
     local vol
     vol=$(docker inspect neo4j-benchmark \
         --format '{{ range .Mounts }}{{ if eq .Destination "/data" }}{{ .Source }}{{ end }}{{ end }}' 2>/dev/null || true)
@@ -40,7 +40,7 @@ detect_scale_factor() {
         return
     fi
 
-    # Analisi dei volumi montati su postgres-benchmark
+    # Analizza volumi postgres
     local pg_vol
     pg_vol=$(docker inspect postgres-benchmark \
         --format '{{ range .Mounts }}{{ if eq .Destination "/var/lib/postgresql/data" }}{{ .Source }}{{ end }}{{ end }}' 2>/dev/null || true)
@@ -52,7 +52,7 @@ detect_scale_factor() {
         return
     fi
 
-    # Fallback: stima SCALE_FACTOR in base al numero di nodi Person
+    # Stima scale factor
     local n
     n=$(docker exec neo4j-benchmark cypher-shell -u neo4j -p password \
         "MATCH (p:Person) RETURN count(p) AS n;" 2>/dev/null | tail -1 | tr -d ' ' || true)
@@ -66,7 +66,7 @@ detect_scale_factor() {
 SF_ACTIVE=$(detect_scale_factor)
 echo -e "${YELLOW}[INFO] Scale Factor rilevato: SF=${SF_ACTIVE}${NC}"
 
-# Funzione di pulizia e ripristino cluster (richiamata all'uscita)
+# Definisce cleanup
 function cleanup {
     echo -e "\n${YELLOW}[CLEANUP] Spegnimento cluster Raft e pulizia volumi...${NC}"
     docker compose -f infrastructure/docker-compose-cluster.yml down -v 2>/dev/null || true
@@ -105,12 +105,12 @@ trap cleanup EXIT
 echo -e "${YELLOW}[0/6] Sospensione istanze singole...${NC}"
 docker compose -f infrastructure/docker-compose.yml stop 2>/dev/null || true
 
-# 1. Pulizia e avvio cluster
+# Avvia cluster
 echo -e "${YELLOW}[1/6] Pulizia volumi precedenti e avvio cluster...${NC}"
 docker compose -f infrastructure/docker-compose-cluster.yml down -v
 NEO4J_ACCEPT_LICENSE_AGREEMENT=yes docker compose -f infrastructure/docker-compose-cluster.yml up -d
 
-# 2. Attesa quorum
+# Attende quorum
 echo -e "\n${YELLOW}[2/6] Attesa formazione del quorum Raft...${NC}"
 MAX_RETRIES=30
 RETRY_COUNT=0
@@ -125,15 +125,15 @@ until docker exec neo4j-core1 cypher-shell -u neo4j -p password "RETURN 1" >/dev
 done
 echo -e "\n${GREEN}[OK] Cluster pronto e quorum raggiunto!${NC}"
 
-# Sincronizzazione dei ruoli del cluster
+# Attende sincronizzazione
 sleep 10
 
-# 2.5 Allocazione Topologia
+# Alloca topologia
 echo -e "\n${YELLOW}[3/6] Allocazione topologia database neo4j (3 PRIMARY, 2 SECONDARY)...${NC}"
-# Estrazione ID server
+# Estrae ID server
 docker exec neo4j-core1 cypher-shell -d system -u neo4j -p password "SHOW SERVERS YIELD name RETURN name" > temp_servers.txt
 
-# Abilitazione dei server
+# Abilita server
 tail -n +2 temp_servers.txt | tr -d '"' | while read srv_id; do
     if [ ! -z "$srv_id" ]; then
         docker exec neo4j-core1 cypher-shell -d system -u neo4j -p password "ENABLE SERVER '$srv_id';"
@@ -167,7 +167,7 @@ until docker exec neo4j-core1 cypher-shell -d system -u neo4j -p password "SHOW 
 done
 echo -e "\n${GREEN}[OK] Leader eletto e pronto per le scritture!${NC}"
 
-# 3. Copia file CSV su tutti i nodi Core
+# Copia CSV
 echo -e "\n${YELLOW}[4/6] Preparazione directory e copia dataset CSV nei nodi Core...${NC}"
 for core in neo4j-core1 neo4j-core2 neo4j-core3; do
     docker exec $core bash -c "mkdir -p /var/lib/neo4j/import/dynamic /var/lib/neo4j/import/static"
@@ -176,7 +176,7 @@ for core in neo4j-core1 neo4j-core2 neo4j-core3; do
 done
 echo -e "${GREEN}[OK] File copiati con successo.${NC}"
 
-# 4. Caricamento dati
+# Carica dati
 echo -e "\n${YELLOW}[4/6] Caricamento nodi Person e relazioni KNOWS (LOAD CSV)...${NC}"
 docker exec neo4j-core1 cypher-shell -u neo4j -p password '
 CREATE CONSTRAINT person_id IF NOT EXISTS FOR (p:Person) REQUIRE p.id IS UNIQUE;
@@ -208,7 +208,7 @@ docker exec neo4j-core1 cypher-shell -u neo4j -p password '
 MATCH ()-[r:KNOWS]->() RETURN count(r) AS n_knows;
 '
 
-# 5. Esecuzione Benchmark
+# Esegue benchmark
 echo -e "\n${YELLOW}[5/6] Esecuzione benchmark Scenario 3...${NC}"
 echo -e "      (Log esportato in benchmarks/scenario3/benchmark_output.txt)\n"
 docker run --rm \
@@ -220,7 +220,7 @@ docker run --rm \
   python:3.11 \
   bash -c "pip install --quiet neo4j docker && python benchmarks/scenario3/scenario3_benchmark.py 2>&1 | tee benchmarks/scenario3/benchmark_output.txt"
 
-# 6. Generazione Grafici
+# Genera grafici
 echo -e "\n${YELLOW}[6/6] Generazione grafici SVG...${NC}"
 docker run --rm \
   -v $(pwd):/app -w /app \

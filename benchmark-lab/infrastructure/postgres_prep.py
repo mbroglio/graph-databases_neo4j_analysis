@@ -8,14 +8,14 @@ def load(entity, sub):
     files = glob.glob(f"{raw_dir}/{sub}/{entity}/*.csv")
     if not files: return pd.DataFrame()
     
-    # Header pre-patch
+    # Legge header originale
     header_file = os.path.join(os.path.dirname(raw_dir), 'headers', f"{entity}-header.csv")
     if os.path.exists(header_file):
         with open(header_file, 'r') as f:
             header = f.readline().strip().split('|')
         df = pd.concat([pd.read_csv(f, sep='|', low_memory=False, names=header) for f in files])
         
-        # Normalizzazione nomi colonne
+        # Normalizza colonne
         rename_map = {}
         for h in header:
             clean = h
@@ -102,7 +102,7 @@ if not person.empty:
     pe['placeid'] = pe['placeid'].astype('Int64')
     save(pe, 'person', 'dynamic')
     
-    # Unnest di email e lingue
+    # Espande colonne multiple
     emails = []
     languages = []
     for _, row in person.iterrows():

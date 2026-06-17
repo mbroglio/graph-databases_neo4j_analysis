@@ -45,9 +45,7 @@ except ImportError:
     import matplotlib.patches as mpatches
 
 
-# ---------------------------------------------------------------------------
-# Stile comune coerente con i plot degli scenari 1 e 2
-# ---------------------------------------------------------------------------
+# Stile dark-mode
 STYLE = {
     "figure.facecolor":  "#ffffff",
     "axes.facecolor":    "#ffffff",
@@ -76,9 +74,7 @@ def load_results(path: str) -> dict:
         return json.load(f)
 
 
-# ---------------------------------------------------------------------------
-# GRAFICO 1 – Timeline Fault Tolerance
-# ---------------------------------------------------------------------------
+# Grafico timeline
 
 def plot_fault_tolerance_timeline(results: dict, out_dir: str):
     ft = results.get("fault_tolerance", {})
@@ -94,7 +90,7 @@ def plot_fault_tolerance_timeline(results: dict, out_dir: str):
         print("[SKIP] Nessun record di scrittura nella timeline.")
         return
 
-    # Raggruppamento risultati per esito transazione
+    # Raggruppa risultati per esito
     t_ok    = [r[0] for r in records if r[1]]
     lat_ok  = [r[2] for r in records if r[1]]
     t_fail  = [r[0] for r in records if not r[1]]
@@ -103,23 +99,23 @@ def plot_fault_tolerance_timeline(results: dict, out_dir: str):
     with plt.rc_context(STYLE):
         fig, ax = plt.subplots(figsize=(12, 5))
 
-        # Sfondo finestra di downtime
+        # Disegna finestra di downtime
         if t_fail:
             t_fail_min = min(t_fail)
             t_fail_max = max(t_fail)
             ax.axvspan(t_fail_min, t_fail_max, alpha=0.15, color=COLOR_SHADE,
                        label=f"Finestra downtime ({downtime:.0f} ms)" if downtime else "Finestra downtime")
 
-        # Linea verticale: momento del crash (t=0)
+        # Disegna crash leader
         ax.axvline(x=0, color="#e74c3c", linewidth=1.5, linestyle="--",
                    label="Crash Leader (t=0)")
 
-        # Linea verticale: ripristino
+        # Disegna ripristino
         if ft.get("t_recovery_s") is not None:
             ax.axvline(x=ft["t_recovery_s"], color=COLOR_OK, linewidth=1.5, linestyle="--",
                        label=f"Nuovo leader operativo (+{ft['t_recovery_s']:.2f}s)")
 
-        # Scatter scritture
+        # Disegna scatter scritture
         if t_ok:
             ax.scatter(t_ok, lat_ok, c=COLOR_OK, s=12, alpha=0.7,
                        label=f"Scrittura OK ({len(t_ok)})")
@@ -143,9 +139,7 @@ def plot_fault_tolerance_timeline(results: dict, out_dir: str):
         print(f"[OK] Salvato: {out_path}")
 
 
-# ---------------------------------------------------------------------------
-# GRAFICO 2 – Distribuzione del Carico (Load Balancing)
-# ---------------------------------------------------------------------------
+# Grafico load balancing
 
 def plot_load_balancing(results: dict, out_dir: str):
     rs   = results.get("read_scalability", {})
@@ -155,14 +149,14 @@ def plot_load_balancing(results: dict, out_dir: str):
         print("[SKIP] Dati server_distribution non disponibili.")
         return
 
-    # Ordina per numero di query (desc)
+    # Ordina per numero di query
     items = sorted(dist.items(), key=lambda x: -x[1]["count"])
     labels = [addr for addr, _ in items]
     counts = [v["count"] for _, v in items]
     pcts   = [v["percent"] for _, v in items]
     lats   = [v["mean_lat_ms"] for _, v in items]
 
-    # Colori: secondari tipicamente hanno porte 7690/7691
+    # Imposta colori
     colors = []
     for lbl in labels:
         is_secondary = any(p in lbl for p in ["7690", "7691", "secondary"])
@@ -171,7 +165,7 @@ def plot_load_balancing(results: dict, out_dir: str):
     with plt.rc_context(STYLE):
         fig, axes = plt.subplots(1, 2, figsize=(14, max(4, len(labels) * 0.8 + 2)))
 
-        # -- Sottografico A: barre orizzontali (conteggio query) --
+        # Barre conteggio query
         ax1 = axes[0]
         bars = ax1.barh(labels, counts, color=colors, alpha=0.85, edgecolor="#333333")
         for bar, pct in zip(bars, pcts):
@@ -187,12 +181,12 @@ def plot_load_balancing(results: dict, out_dir: str):
         ax1.grid(axis="x")
         ax1.invert_yaxis()
 
-        # Legenda colori
+        # Disegna legenda
         p_patch = mpatches.Patch(color=COLOR_BAR1, label="Nodo Primario")
         s_patch = mpatches.Patch(color=COLOR_BAR2, label="Nodo Secondario")
         ax1.legend(handles=[p_patch, s_patch], fontsize=9, loc="lower right")
 
-        # -- Sottografico B: latenza media per nodo --
+        # Barre latenza
         ax2 = axes[1]
         bars2 = ax2.barh(labels, lats, color=colors, alpha=0.85, edgecolor="#333333")
         for bar, lat in zip(bars2, lats):

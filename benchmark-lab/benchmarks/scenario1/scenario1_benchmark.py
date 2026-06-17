@@ -11,9 +11,7 @@ import json
 import sys
 from datetime import datetime
 
-# ---------------------------------------------------------------------------
-# Dipendenze – installazione se mancanti
-# ---------------------------------------------------------------------------
+# Verifica dipendenze
 try:
     import psycopg2
 except ImportError:
@@ -32,9 +30,7 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "neo4j"])
     from neo4j import GraphDatabase
 
-# ---------------------------------------------------------------------------
-# Configurazione connessioni
-# ---------------------------------------------------------------------------
+# Configurazione database
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
 NEO4J_PASSWORD = "password"
@@ -45,16 +41,13 @@ PG_DB = "ldbcsnb"
 PG_USER = "postgres"
 PG_PASS = "mysecretpassword"
 
-# ---------------------------------------------------------------------------
-# Parametri benchmark
-# ---------------------------------------------------------------------------
-N_RUNS   = 50   # ripetizioni per query (escl. warm-up) – solidità statistica
-N_WARMUP = 20   # esecuzioni di warm-up – necessario per JIT compilation JVM
+# Parametri test
+N_RUNS   = 50   # ripetizioni
+N_WARMUP = 20   # esecuzioni warm-up
 
-# Campionamento stratificato: quanti nodi per ogni strato
-N_SAMPLE_LOW  = 5   # nodi a basso grado (poche connessioni)
-N_SAMPLE_MID  = 5   # nodi a grado medio
-N_SAMPLE_HIGH = 5   # super-nodi (alto grado)
+N_SAMPLE_LOW  = 5   # nodi basso grado
+N_SAMPLE_MID  = 5   # nodi grado medio
+N_SAMPLE_HIGH = 5   # nodi alto grado
 
 # ---------------------------------------------------------------------------
 # Utility
@@ -80,7 +73,7 @@ def measure_ms(fn, *args, **kwargs):
 
 
 def compute_stats(times_ms: list[float]) -> dict:
-    """Calcola le statistiche di latenza su una lista di misurazioni."""
+    """Calcola le statistiche di latenza."""
     if not times_ms:
         return {}
     sorted_t = sorted(times_ms)
@@ -110,7 +103,7 @@ def print_stats(label: str, stats: dict):
     print(f"    Max        : {stats['max_ms']:>10.3f} ms")
 
 
-# Setup connessioni ai due DB
+# Connessioni ai database
 
 
 def get_neo4j_driver():
@@ -123,20 +116,11 @@ def get_pg_conn():
     )
 
 
-# Estrazione pseudocasuale dei nodi di partenza (variazione di connettività)
-# Garantisce rappresentatività statistica del campione selezionato.
+# Campionamento stratificato
 
 def sample_nodes_stratified(neo4j_driver, n_low: int = 5, n_mid: int = 5,
                               n_high: int = 5) -> dict:
-    """
-    Seleziona randomicamente i nodi radice in modo stratificato per grado:
-      - low:  nodi con grado nel primo quartile (poche connessioni)
-      - mid:  nodi con grado nella metà centrale (grado medio)
-      - high: nodi con grado nell'ultimo quartile (super-nodi)
-
-    Il campionamento evita bias di selezione manuale e garantisce confronti
-    statisticamente rappresentativi dell'intera distribuzione del grafo.
-    """
+    """Estrae nodi di partenza per grado (low, mid, high)."""
     with neo4j_driver.session() as s:
         res = s.run("""
             MATCH (p:Person)
@@ -180,7 +164,7 @@ def sample_nodes_stratified(neo4j_driver, n_low: int = 5, n_mid: int = 5,
 
 
 def neo4j_multihop(session, person_id: int, depth: int):
-    """Conta tutti i Person raggiungibili tramite KNOWS a 'depth' hop."""
+    """Conta i Person raggiungibili in 'depth' hop."""
     cypher = (
         f"MATCH (p:Person {{id: $pid}})-[:KNOWS*1..{depth}]-(friend:Person) "
         f"RETURN count(DISTINCT friend) AS cnt"
@@ -190,15 +174,7 @@ def neo4j_multihop(session, person_id: int, depth: int):
 
 
 def pg_multihop(conn, person_id: int, depth: int):
-    """
-    Equivalente SQL con CTE ricorsiva per navigare la rete KNOWS fino a 'depth' livelli.
-
-    La tabella `knows` è bidirezionale. Pertanto è sufficiente
-    navigare in una sola direzione (k_person1id → k_person2id) per raggiungere
-    tutti i vicini.
-
-    L'assenza di statement_timeout consente di rilevare la crescita esponenziale del costo computazionale SQL.
-    """
+    """Esegue navigazione CTE ricorsiva in SQL."""
     cur = conn.cursor()
     sql = """
     WITH RECURSIVE friends(person_id, depth) AS (
@@ -226,9 +202,7 @@ def run_multihop_test(neo4j_driver, pg_conn, sampled_nodes: dict):
     for depth in [1, 2, 3, 4]:
         sub_banner(f"Profondità {depth} hop")
 
-        # Per ogni profondità usiamo nodi da strati diversi e facciamo la media
-        # Scegliamo nodi appropriati: depth 1-2 possono usare tutti, depth 3-4
-        # preferiscono nodi con grado medio/alto per risultati interessanti
+        # Seleziona pool di nodi per profondità
         if depth <= 2:
             candidate_pool = sampled_nodes["low"] + sampled_nodes["mid"]
         else:
@@ -240,7 +214,7 @@ def run_multihop_test(neo4j_driver, pg_conn, sampled_nodes: dict):
         pid = random.choice(candidate_pool)
         print(f"  Person ID scelto: {pid}")
 
-        # Warm-up
+        # Esegue warm-up
         print(f"  [Warm-up] {N_WARMUP} iterazioni per JIT compilation JVM...")
         with neo4j_driver.session() as s:
             for _ in range(N_WARMUP):
@@ -300,18 +274,11 @@ def run_multihop_test(neo4j_driver, pg_conn, sampled_nodes: dict):
     return results
 
 
-# TEST 1.2 - TRIANGOLI (Pattern Matching)
-
-# Nota metodologica (Triangle Count):
-# Il conteggio globale dei triangoli via Cypher puro è una query OLTP
-# transazionale. In produzione, questa operazione si delega alla libreria
-# Graph Data Science (GDS) di Neo4j: `CALL gds.triangleCount.write(...)`.
-# Questo test valuta il motore transazionale Cypher puro per fornire
-# un confronto OLTP equo.
+# TEST 1.2 - Triangle detection
 
 
 def neo4j_triangle_count(session):
-    """Conta i triangoli (A-B-C-A) nel grafo delle amicizie KNOWS (non direzionato)."""
+    """Esegue conteggio globale dei triangoli."""
     cypher = """
     MATCH (a:Person)-[:KNOWS]-(b:Person)-[:KNOWS]-(c:Person)-[:KNOWS]-(a)
     WHERE a.id < b.id AND b.id < c.id
@@ -322,7 +289,7 @@ def neo4j_triangle_count(session):
 
 
 def neo4j_person_triangle_count(session, person_id: int):
-    """Conta i triangoli che coinvolgono una specifica persona (non direzionato)."""
+    """Esegue conteggio locale dei triangoli."""
     cypher = """
     MATCH (p:Person {id: $pid})-[:KNOWS]-(b:Person)-[:KNOWS]-(c:Person)-[:KNOWS]-(p)
     WHERE b.id < c.id
@@ -333,7 +300,7 @@ def neo4j_person_triangle_count(session, person_id: int):
 
 
 def pg_triangle_count(conn):
-    """Conta i triangoli nel grafo delle amicizie usando self-join triplo."""
+    """Esegue conteggio globale dei triangoli via SQL."""
     sql = """
     SELECT COUNT(*) AS triangles
     FROM knows k1
@@ -350,12 +317,7 @@ def pg_triangle_count(conn):
 
 
 def pg_person_triangle_count(conn, person_id: int):
-    """Conta i triangoli che coinvolgono una persona specifica.
-
-    La clausola k2.k_person1id < k3.k_person1id è l'equivalente SQL
-    del `WHERE b.id < c.id` usato in Cypher per deduplicare i triangoli
-    (evitando di contare sia (pid,b,c) che (pid,c,b)).
-    """
+    """Esegue conteggio locale dei triangoli via SQL."""
     sql = """
     SELECT COUNT(*) AS triangles
     FROM knows k1
@@ -374,7 +336,7 @@ def run_triangle_test(neo4j_driver, pg_conn, sampled_nodes: dict):
     banner("TEST 1.2 – Pattern Matching: Ricerca di Cicli (Triangle Detection)")
     results = {}
 
-    # --- Sub-test A: global triangle count ---
+    # Test triangoli globali
     sub_banner("1.2a – Conteggio globale triangoli (tutti i nodi)")
     print("  Nota: implementazione Cypher OLTP puro")
 
@@ -411,7 +373,7 @@ def run_triangle_test(neo4j_driver, pg_conn, sampled_nodes: dict):
     print_stats("Neo4j (OLTP Cypher)", neo4j_stats)
     print_stats("PostgreSQL", pg_stats)
     print(f"  >>> Speedup Neo4j vs PostgreSQL: {speedup}x")
-        print(f"  Neo4j presenta latenze superiori su metriche OLTP; in scenari di produzione si consiglia l'uso di GDS.")
+    print(f"  Neo4j presenta latenze superiori su metriche OLTP; in scenari di produzione si consiglia l'uso di GDS.")
 
     results["global_triangles"] = {
         "neo4j_result": int(neo4j_global),
@@ -424,10 +386,10 @@ def run_triangle_test(neo4j_driver, pg_conn, sampled_nodes: dict):
         ),
     }
 
-    # --- Sub-test B: per-person triangle count (campionamento stratificato) ---
+    # Test triangoli locali
     sub_banner("1.2b – Triangoli per persona specifica (localizzato, campione stratificato)")
 
-    # Usa nodi di grado medio per risultati interessanti (non banali)
+    # Seleziona nodo
     pid_pool = sampled_nodes["mid"] if sampled_nodes["mid"] else sampled_nodes["all"][:5]
     pid = random.choice(pid_pool)
     print(f"  Person ID scelto: {pid} (grado medio)")
@@ -482,7 +444,7 @@ def run_triangle_test(neo4j_driver, pg_conn, sampled_nodes: dict):
 
 
 def neo4j_shortest_path(session, src_id: int, dst_id: int, max_hops: int = 6):
-    """Cammino minimo tra due persone via KNOWS (BFS nativo Neo4j)."""
+    """Calcola lo shortest path tra due nodi in Neo4j."""
     cypher = f"""
     MATCH (src:Person {{id: $src}}), (dst:Person {{id: $dst}})
     MATCH path = shortestPath((src)-[:KNOWS*..{max_hops}]-(dst))
@@ -494,9 +456,7 @@ def neo4j_shortest_path(session, src_id: int, dst_id: int, max_hops: int = 6):
 
 
 def pg_sql_shortest_path(conn, src_id: int, dst_id: int, max_depth: int = 6) -> int:
-    """
-    Cammino minimo calcolato interamente dal motore SQL usando una CTE ricorsiva.
-    """
+    """Calcola lo shortest path tra due nodi in SQL."""
     if src_id == dst_id:
         return 0
 
@@ -528,7 +488,7 @@ def pg_sql_shortest_path(conn, src_id: int, dst_id: int, max_depth: int = 6) -> 
 
 def pick_distant_pair(neo4j_driver, person_ids: list[int], min_hops: int = 2,
                        max_hops: int = 6) -> tuple:
-    """Seleziona casualmente una coppia di persone con distanza >= min_hops in Neo4j."""
+    """Estrae una coppia di nodi distante almeno min_hops."""
     random.shuffle(person_ids)
     with neo4j_driver.session() as s:
         for i in range(min(50, len(person_ids))):
@@ -550,7 +510,7 @@ def run_shortest_path_test(neo4j_driver, pg_conn, sampled_nodes: dict):
     print("  [INFO] Confronto dimostra crescita esponenziale del tempo SQL vs BFS Neo4j.")
     pairs = []
 
-    # Cerca coppie per distanze 1, 2, 3, 4, 5, 6 hop
+    # Estrae coppie
     for min_h, label in [(1, "dist_1hop"), (2, "dist_2hop"), (3, "dist_3hop"),
                           (4, "dist_4hop"), (5, "dist_5hop"), (6, "dist_6hop")]:
         src, dst, actual_h = pick_distant_pair(
@@ -565,13 +525,13 @@ def run_shortest_path_test(neo4j_driver, pg_conn, sampled_nodes: dict):
         else:
             print(f"  [WARN] Non trovata coppia a {min_h} hop (grafo piccolo, SF 0.1)")
 
-    # Aggiungi anche una coppia senza limite (massima distanza trovata)
+    # Estrae coppia distante (senza limite max_hops)
     src_far, dst_far, h_far = pick_distant_pair(neo4j_driver, list(all_ids), min_hops=3)
     if h_far > 0 and not any(s == src_far and d == dst_far for s, d, _, _ in pairs):
         pairs.append((src_far, dst_far, h_far, f"dist_max"))
         print(f"  Coppia distanza massima: Person {src_far} → Person {dst_far} ({h_far} hop)")
 
-    # Timeout per PostgreSQL a hop elevati (in secondi)
+    # Imposta timeout
     PG_TIMEOUT_S = 120  # se PG non risponde in 2 minuti, segniamo come N/A
 
     for src, dst, actual_h, label in pairs:
@@ -582,7 +542,7 @@ def run_shortest_path_test(neo4j_driver, pg_conn, sampled_nodes: dict):
             for _ in range(N_WARMUP):
                 neo4j_shortest_path(s, src, dst)
 
-        # Warm-up PostgreSQL solo per hop <= 4 (evita stallo)
+        # Esegue warm-up PostgreSQL
         if actual_h <= 4:
             for _ in range(min(5, N_WARMUP)):
                 pg_sql_shortest_path(pg_conn, src, dst)
@@ -600,7 +560,7 @@ def run_shortest_path_test(neo4j_driver, pg_conn, sampled_nodes: dict):
         h_pg = -1
         for run_i in range(N_RUNS):
             try:
-                # Imposta statement_timeout per evitare stallo su hop alti
+                # Imposta timeout
                 conn_cur = pg_conn.cursor()
                 conn_cur.execute(f"SET statement_timeout = '{PG_TIMEOUT_S * 1000}'")
                 conn_cur.close()
@@ -608,7 +568,7 @@ def run_shortest_path_test(neo4j_driver, pg_conn, sampled_nodes: dict):
                 h_pg, ms = measure_ms(pg_sql_shortest_path, pg_conn, src, dst, actual_h + 1)
                 pg_times.append(ms)
 
-                # Reset timeout
+                # Azzera timeout
                 conn_cur = pg_conn.cursor()
                 conn_cur.execute("RESET statement_timeout")
                 conn_cur.close()
@@ -700,13 +660,11 @@ def main():
         print(f"  [ERR] PostgreSQL: {e}")
         sys.exit(1)
 
-    # Conta i Person per rilevare il Scale Factor (valori ufficiali LDBC SNB):
-    # SF 0.1 ≈ 1.700 persone, SF 1 ≈ 11.000, SF 3 ≈ 36K, SF 10 ≈ 110K
+    # Conta i nodi Person
     with neo4j_driver.session() as _s:
         _n = _s.run("MATCH (p:Person) RETURN count(p) AS n").single()["n"]
 
-    # Rileva il Scale Factor dal conteggio Person (valori ufficiali LDBC SNB):
-    # SF 0.1 ≈ 1.700 persone,  SF 0.3 ≈ 5K,  SF 1 ≈ 11K,  SF 3 ≈ 36K,  SF 10 ≈ 110K
+    # Stima lo Scale Factor
     if _n < 500:
         detected_sf = "0.1"
     elif _n < 2_000:
@@ -722,7 +680,7 @@ def main():
     else:
         detected_sf = "100+"
 
-    # Campionamento stratificato dei nodi
+    # Campiona i nodi
     random.seed(42)   # riproducibilità
     sampled_nodes = sample_nodes_stratified(
         neo4j_driver, n_low=N_SAMPLE_LOW, n_mid=N_SAMPLE_MID, n_high=N_SAMPLE_HIGH

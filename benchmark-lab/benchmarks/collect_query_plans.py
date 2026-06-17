@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Estrazione automatizzata dei piani di esecuzione (EXPLAIN/PROFILE) per Postgres e Neo4j.
-"""
+Estrae i piani di esecuzione (EXPLAIN/PROFILE) per Postgres e Neo4j.
 """
 
 import os
@@ -26,7 +25,7 @@ except ImportError:
     from neo4j import GraphDatabase
 
 
-# Parametri connessione DB
+# Parametri connessione
 NEO4J_URI      = "bolt://localhost:7687"
 NEO4J_USER     = "neo4j"
 NEO4J_PASSWORD = "password"
@@ -41,7 +40,7 @@ OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "query_plans")
 
 
-# Funzioni di supporto per formattazione e cartelle
+# Formattazione e I/O
 
 def banner(s):
     print(f"\n{'='*60}\n  {s}\n{'='*60}")
@@ -51,16 +50,16 @@ def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
 
 
-# Funzioni per Postgres
+# Funzioni Postgres
 
 def pg_explain(conn, sql: str, params: dict = None) -> str:
-    # Esecuzione EXPLAIN ANALYZE
+    # Esegue EXPLAIN
     explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT, VERBOSE) {sql}"
     cur = conn.cursor()
     try:
         cur.execute(explain_sql, params)
         rows = cur.fetchall()
-        conn.rollback()  # Chiusura transazione di lettura implicita
+        conn.rollback()  # Chiude transazione
         return "\n".join(r[0] for r in rows)
     except Exception as e:
         conn.rollback()
@@ -70,7 +69,7 @@ def pg_explain(conn, sql: str, params: dict = None) -> str:
 
 
 def pg_show_index_usage(conn, table: str) -> str:
-    # Recupero definizione degli indici
+    # Estrae indici
     sql = """
     SELECT
         indexname,
@@ -98,15 +97,15 @@ def pg_show_index_usage(conn, table: str) -> str:
         cur.close()
 
 
-# Funzioni per Neo4j
+# Funzioni Neo4j
 
 def neo4j_profile(driver, cypher: str, params: dict = None) -> str:
-    # Esecuzione query con PROFILE
+    # Esegue PROFILE
     profile_cypher = "PROFILE " + cypher
     with driver.session() as s:
         try:
             result = s.run(profile_cypher, **(params or {}))
-            # Elaborazione risultato per recuperare il piano
+            # Estrae piano
             summary = result.consume()
             plan = summary.profile
             if plan:
@@ -117,7 +116,7 @@ def neo4j_profile(driver, cypher: str, params: dict = None) -> str:
 
 
 def neo4j_explain(driver, cypher: str, params: dict = None) -> str:
-    # Estrazione piano stimato tramite EXPLAIN
+    # Estrae EXPLAIN
     explain_cypher = "EXPLAIN " + cypher
     with driver.session() as s:
         try:
@@ -132,14 +131,14 @@ def neo4j_explain(driver, cypher: str, params: dict = None) -> str:
 
 
 def format_neo4j_plan(plan, indent: int = 0) -> str:
-    # Formattazione dell'albero del piano di esecuzione
+    # Formatta albero
     prefix = "  " * indent
     op = getattr(plan, "operator_type", "unknown")
     args = getattr(plan, "arguments", {})
     identifiers = getattr(plan, "identifiers", [])
     children = getattr(plan, "children", [])
 
-    # Estrazione metriche rilevanti
+    # Estrae metriche
     details = []
     for key in ["EstimatedRows", "Rows", "DbHits", "Memory", "Details"]:
         if key in args:
@@ -154,10 +153,10 @@ def format_neo4j_plan(plan, indent: int = 0) -> str:
     return "\n".join(lines)
 
 
-# Query per l'appendice di analisi
+# Queries da eseguire e analizzare
 
 QUERIES = {
-    # -- Hop multipli --
+    # Hop multipli
     "multihop_1hop_neo4j": {
         "db": "neo4j",
         "type": "profile",
@@ -241,7 +240,7 @@ QUERIES = {
         """,
         "params": {"pid": 983},
     },
-    # -- Cammino minimo --
+    # Cammino minimo
     "shortestpath_neo4j": {
         "db": "neo4j",
         "type": "explain",
@@ -253,7 +252,7 @@ QUERIES = {
         """,
         "params": {"src": 983, "dst": 28587302323389},
     },
-    # -- Group by / Aggregazioni --
+    # Aggregazioni
     "aggregation_pg": {
         "db": "postgres",
         "type": "explain",
@@ -274,13 +273,13 @@ QUERIES = {
 }
 
 
-# Esecuzione principale
+# Main
 
 def main():
     banner("Estrazione Query Plan per la relazione (EXPLAIN/PROFILE)")
     ensure_dir(OUTPUT_DIR)
 
-    # Verifica connessioni ai DB
+    # Verifica connessioni
     try:
         neo4j_driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
         neo4j_driver.verify_connectivity()
@@ -299,7 +298,7 @@ def main():
         print(f"  [ERR] PostgreSQL: {e}")
         pg_conn = None
 
-    # Info sugli indici per la doc
+    # Genera informazioni sugli indici
     md_sections = [
         "# Appendice: Piani di esecuzione e Indici\n",
         f"_Generato: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_\n",
@@ -311,14 +310,14 @@ def main():
         print(f"\n{idx_info}")
         md_sections.append(f"```\n{idx_info}\n```\n")
 
-        # Indici anche su `message` e `person`
+        # Estrae altri indici
         for tbl in ["message", "person"]:
             idx_info2 = pg_show_index_usage(pg_conn, tbl)
             md_sections.append(f"\n### Indici su `{tbl}`\n```\n{idx_info2}\n```\n")
 
     md_sections.append("\n## B. Piani di Esecuzione Query Chiave\n")
 
-    # Estrazione iterativa dei piani di esecuzione
+    # Itera query
     all_plans = {}
     for key, q in QUERIES.items():
         label = q["label"]
@@ -335,9 +334,9 @@ def main():
         else:
             plan_text = "[SKIP – database non disponibile]"
 
-        print(plan_text[:2000])  # Output troncato per leggibilità
+        print(plan_text[:2000])  # Tronca
 
-        # Dump su file di testo singolo
+        # Salva piano
         fname = f"{key}.txt"
         fpath = os.path.join(OUTPUT_DIR, fname)
         with open(fpath, "w") as f:
@@ -345,7 +344,7 @@ def main():
             f.write(plan_text)
         print(f"  [OK] Salvato: {fpath}")
 
-        # Generazione appendice Markdown
+        # Genera markdown
         db_tag = q["db"].upper()
         qtype = q["type"].upper()
         query_text = q.get("cypher") or q.get("sql", "")
@@ -357,13 +356,13 @@ def main():
         )
         all_plans[key] = {"label": label, "plan": plan_text}
 
-    # Salvataggio appendice aggregata
+    # Salva appendice
     md_path = os.path.join(OUTPUT_DIR, "appendice_explain.md")
     with open(md_path, "w") as f:
         f.write("\n".join(md_sections))
     print(f"\n[OK] Appendice Markdown salvata in: {md_path}")
 
-    # Esportazione JSON per eventuale post-elaborazione
+    # Salva JSON
     json_path = os.path.join(OUTPUT_DIR, "query_plans.json")
     with open(json_path, "w") as f:
         json.dump({

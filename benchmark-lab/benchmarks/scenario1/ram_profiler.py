@@ -13,7 +13,7 @@ NEO4J_USER = "neo4j"
 NEO4J_PASS = "password"
 PG_DSN = "dbname=ldbcsnb user=postgres password=mysecretpassword host=localhost port=5432"
 
-# ID target per query ad alto branching factor
+# Controlla parametri in ingresso
 if len(sys.argv) != 3:
     print("Usage: python ram_profiler.py <PID> <OUTPUT_DIR>")
     sys.exit(1)
@@ -109,7 +109,7 @@ def run_queries():
         profiler.mark_event("Neo4j_end")
         print(f"Neo4j result: {neo4j_result} friends")
         
-        # Verifica di coerenza dei risultati
+        # Verifica coerenza risultati
         if pg_result != neo4j_result:
             print(f"⚠️ Rilevata discrepanza nei risultati: PG={pg_result}, Neo4j={neo4j_result}")
         else:

@@ -8,11 +8,7 @@ import matplotlib.ticker as ticker
 
 
 class DockerRAMProfiler:
-    """Script per profilare quanta RAM consumano i container Docker mentre girano le query.
-    (Utilizzato per la generazione dei grafici sulle metriche di memoria).
-
-    Implementato tramite invocazione asincrona di 'docker stats'.
-    """
+    """Profila RAM container Docker."""
 
     def __init__(self, containers, output_dir, poll_interval=0.3):
         self.containers = containers
@@ -27,7 +23,7 @@ class DockerRAMProfiler:
         self.thread = None
 
     def _parse_mem(self, mem_str):
-        # Elabora l'output stringa di docker stats e converte i valori in MB
+        # Converte output in MB
         mem_str = mem_str.strip()
         try:
             if "GiB" in mem_str:
@@ -112,13 +108,7 @@ def plot_ram_usage(
     title="Allocazione Dinamica RAM",
     filename="ram_usage_plot.svg",
 ):
-    """
-    Funzione per plottare i due grafici sovrapposti della RAM (Postgres sopra, Neo4j sotto).
-    
-    Nota: L'allocazione di base differisce significativamente perché Neo4j prealloca la memoria nella JVM all'avvio, mentre
-    Postgres alloca memoria in modo dinamico per i join.
-    L'analisi si concentra sul delta (Δ) durante l'esecuzione.
-    """
+    """Genera i grafici RAM."""
     if not os.path.exists(json_path):
         print(f"Error: {json_path} not found.")
         return
@@ -131,7 +121,7 @@ def plot_ram_usage(
     events = data["events"]
     containers = data["containers"]
 
-    # Estrazione metriche massime e differenziali per ogni container
+    # Estrae metriche container
     stats = {}
     for c in containers:
         lst = ram_data[c]
@@ -142,7 +132,7 @@ def plot_ram_usage(
         delta = peak - baseline
         stats[c] = {"baseline": baseline, "peak": peak, "delta": delta, "raw": lst}
 
-    # Identificazione dei nomi effettivi dei container dai dati raccolti
+    # Identifica container
     pg_key    = next((c for c in containers if "postgres" in c.lower()), None)
     neo4j_key = next((c for c in containers if "neo4j" in c.lower()), None)
 
@@ -150,7 +140,7 @@ def plot_ram_usage(
         print("Errore: container non trovati nei dati.")
         return
 
-    # Setup colori e stile del plot
+    # Configura stile
     DARK_STYLE = {
     "figure.facecolor":  "#ffffff",
     "axes.facecolor":    "#ffffff",
@@ -167,14 +157,14 @@ def plot_ram_usage(
     "font.family":       "DejaVu Sans",
 }
 
-    COLOR_PG = "#2980b9"   # rosso  – PostgreSQL RAM
-    COLOR_N4J   = "#27ae60"   # verde  – Neo4j RAM
-    COLOR_ANNOT = "#c0392b"   # arancio – annotazioni delta
+    COLOR_PG = "#2980b9"   # Colore Postgres
+    COLOR_N4J   = "#27ae60"   # Colore Neo4j
+    COLOR_ANNOT = "#c0392b"   # Colore annotazioni
 
     with plt.rc_context(DARK_STYLE):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
 
-        # Primo plot (Postgres)
+        # Disegna Postgres
         pg_raw  = stats[pg_key]["raw"]
         pg_base = stats[pg_key]["baseline"]
         pg_peak = stats[pg_key]["peak"]
@@ -190,7 +180,7 @@ def plot_ram_usage(
             ax1.axvline(events["PG_start"], color=COLOR_PG, ls="--", alpha=0.6, lw=1)
             ax1.axvline(events["PG_end"],   color=COLOR_PG, ls="--", alpha=0.6, lw=1)
 
-        # Annotazione del differenziale di memoria
+        # Annota delta
         delta_pg = stats[pg_key]["delta"]
         mid_t = (events.get("PG_start", ts[0]) + events.get("PG_end", ts[-1])) / 2
         ax1.annotate(
@@ -207,7 +197,7 @@ def plot_ram_usage(
         ax1.grid(True, which="both", alpha=0.3)
         ax1.set_ylim(bottom=max(0, pg_base - 5), top=pg_peak + 8)
 
-        # Secondo plot (Neo4j)
+        # Disegna Neo4j
         n4j_raw  = stats[neo4j_key]["raw"]
         n4j_base = stats[neo4j_key]["baseline"]
         n4j_peak = stats[neo4j_key]["peak"]
@@ -223,7 +213,7 @@ def plot_ram_usage(
             ax2.axvline(events["Neo4j_start"], color=COLOR_N4J, ls="--", alpha=0.6, lw=1)
             ax2.axvline(events["Neo4j_end"],   color=COLOR_N4J, ls="--", alpha=0.6, lw=1)
 
-        # Annotazione del differenziale di memoria (Neo4j)
+        # Annota delta
         delta_n4j = stats[neo4j_key]["delta"]
         mid_t2 = (events.get("Neo4j_start", ts[0]) + events.get("Neo4j_end", ts[-1])) / 2
         ax2.annotate(
@@ -248,7 +238,7 @@ def plot_ram_usage(
         plt.savefig(out_img, format="svg", dpi=300, bbox_inches="tight")
         plt.close()
 
-    # Output riepilogativo per le tabelle LATEX
+    # Stampa dati
     print("\nDATI PER LA TABELLA LATEX:")
     for c in containers:
         if c not in stats:

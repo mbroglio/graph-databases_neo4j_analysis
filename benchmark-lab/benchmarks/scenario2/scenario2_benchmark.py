@@ -13,9 +13,7 @@ import threading
 import concurrent.futures
 from datetime import datetime
 
-# ---------------------------------------------------------------------------
-# Dipendenze – installazione automatica se mancanti
-# ---------------------------------------------------------------------------
+# Verifica dipendenze
 try:
     from neo4j import GraphDatabase, exceptions as neo4j_exc
 except ImportError:
@@ -23,21 +21,16 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "neo4j"])
     from neo4j import GraphDatabase, exceptions as neo4j_exc
 
-# ---------------------------------------------------------------------------
-# Configurazione connessioni
-# ---------------------------------------------------------------------------
+# Configurazione database
 NEO4J_URI      = "bolt://localhost:7687"
 NEO4J_USER     = "neo4j"
 NEO4J_PASSWORD = "password"
 
-# ---------------------------------------------------------------------------
-# Parametri benchmark
-# ---------------------------------------------------------------------------
-N_RUNS        = 30   # ripetizioni per raccogliere statistiche
-N_WARMUP      = 20   # warm-up iniziale (necessario per JIT compilation JVM)
-N_THREADS     = 8    # thread concorrenti per i test di concorrenza
-LOST_UPDATE_THREADS = 10  # thread per il test Lost Update
-# Nota: l'esecuzione 2.3 genera una singola coppia di thread per iterazione
+# Parametri test
+N_RUNS        = 30   # ripetizioni
+N_WARMUP      = 20   # esecuzioni warm-up
+N_THREADS     = 8    # thread concorrenti
+LOST_UPDATE_THREADS = 10  # thread test lost update
 
 # ---------------------------------------------------------------------------
 # Utility
@@ -62,7 +55,7 @@ def measure_ms(fn, *args, **kwargs):
 
 
 def compute_stats(times_ms: list[float]) -> dict:
-    """Calcola le statistiche di latenza su una lista di misurazioni."""
+    """Calcola le statistiche di latenza."""
     if not times_ms:
         return {}
     sorted_t = sorted(times_ms)
@@ -91,23 +84,19 @@ def print_stats(label: str, stats: dict):
     print(f"    Max        : {stats['max_ms']:>10.3f} ms")
 
 
-# Setup della connessione al DB
+# Connessioni ai database
 
 def get_neo4j_driver():
     return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 
-# PREPARAZIONE DEI NODI (reset dello stato iniziale)
+# Prepara i nodi
 
 CONCURRENCY_NODE_COUNT = 5   # nodi dedicati ai test 2.1 e 2.3
 TEST_PROP_NAME         = "notification_count"
 
 def setup_test_nodes(driver, person_ids: list[int]) -> list[int]:
-    """
-    Seleziona N nodi Person esistenti e li usa come target per i test di
-    concorrenza. Inizializza la proprietà `notification_count` = 0.
-    Restituisce la lista degli id scelti.
-    """
+    """Seleziona i nodi Person, inizializza notification_count e restituisci la lista degli ID"""
     chosen = random.sample(person_ids, min(CONCURRENCY_NODE_COUNT, len(person_ids)))
     with driver.session() as s:
         s.run(
@@ -121,7 +110,7 @@ def setup_test_nodes(driver, person_ids: list[int]) -> list[int]:
 
 
 def reset_notification_count(driver, person_ids: list[int], value: int = 0):
-    """Reimposta notification_count al valore specificato su tutti i nodi target."""
+    """Reimposta notification_count."""
     with driver.session() as s:
         s.run(
             "UNWIND $ids AS pid "
@@ -134,12 +123,7 @@ def reset_notification_count(driver, person_ids: list[int], value: int = 0):
 # TEST 2.1 - READ COMMITTED
 
 def reader_task(driver, target_id: int, n_reads: int) -> dict:
-    """
-    Thread di LETTURA analitica locale: legge più volte la proprietà
-    `notification_count` e verifica che non legga mai un valore
-    parzialmente scritto (Dirty Read).
-    Restituisce dizionario con latenze e valori letti.
-    """
+    """Thread di lettura per verifica isolamento."""
     latencies = []
     values_read = []
 
@@ -159,34 +143,14 @@ def reader_task(driver, target_id: int, n_reads: int) -> dict:
     return {"latencies": latencies, "values_read": values_read}
 
 
-# Nota: Latenza di Scrittura
-# I tempi registrati includono deliberatamente
-# uno sleep di 50-100 ms (passo 3) che simula una transazione lunga.
-# Questa pausa induce artificialmente una finestra di concorrenza:
-# senza di essa i reader non avrebbero tempo di intercettare il valore non
-# committato. Il numero riportato in tabella comprende lo sleep intenzionale
-# e non è confrontabile con latenze di transazioni brevi.
-SLEEP_DIRTY_WINDOW_MS_MIN = 50   # ms di pausa minima nella transazione lunga
-SLEEP_DIRTY_WINDOW_MS_MAX = 100  # ms di pausa massima nella transazione lunga
+SLEEP_DIRTY_WINDOW_MS_MIN = 50
+SLEEP_DIRTY_WINDOW_MS_MAX = 100
 
 
 def writer_task_explicit_tx(driver, target_id: int, n_writes: int,
                              committed_value: int = 99,
                              dirty_value: int = 42) -> dict:
-    """
-    Thread di SCRITTURA con transazione esplicita lunga.
-    Struttura di ogni iterazione:
-      1. BEGIN TX
-      2. SET notification_count = dirty_value   ← dato NON committato
-      3. sleep(50-100ms)                         ← finestra di Dirty Read
-      4. SET notification_count = committed_value
-      5. COMMIT
-
-    Se Neo4j rispettasse Read Committed, nessun reader vedrebbe `dirty_value`
-    durante il passo 3. Un sistema senza isolamento mostrerebbe dirty_value.
-
-    Nota: la latenza totale include una pausa intenzionale (50-100ms).
-    """
+    """Thread di scrittura con transazione esplicita lunga."""
     latencies = []
     errors = 0
 
@@ -196,16 +160,16 @@ def writer_task_explicit_tx(driver, target_id: int, n_writes: int,
             with driver.session() as s:
                 tx = s.begin_transaction()
                 try:
-                    # Scrive il valore "sporco" (non committato)
+                    # Scrive valore non committato
                     tx.run(
                         "MATCH (p:Person {id: $pid}) SET p.notification_count = $val",
                         pid=target_id, val=dirty_value
                     ).consume()
 
-                    # Finestra deliberata: reader possono girare in questo slot
+                    # Pausa per finestra di concorrenza
                     time.sleep(random.uniform(0.050, 0.100))
 
-                    # Aggiorna al valore finale committato
+                    # Aggiorna al valore finale
                     tx.run(
                         "MATCH (p:Person {id: $pid}) SET p.notification_count = $val",
                         pid=target_id, val=committed_value
@@ -230,7 +194,7 @@ def run_read_committed_test(driver, target_ids: list[int]) -> dict:
     results = {}
 
     target_id = target_ids[0]
-    # Valori usati nel test: 42 = dirty (non committato), 99 = committed
+    # Imposta valori di test
     DIRTY_VALUE     = 42
     COMMITTED_VALUE = 99
     VALID_VALUES    = {0, COMMITTED_VALUE, None}  # valori leciti per un reader
@@ -253,7 +217,7 @@ def run_read_committed_test(driver, target_ids: list[int]) -> dict:
         read_results  = []
         write_results = []
 
-        # N_THREADS/2 reader e N_THREADS/2 writer concorrenti
+        # Esegue letture e scritture concorrenti
         with concurrent.futures.ThreadPoolExecutor(max_workers=N_THREADS) as pool:
             n_readers = N_THREADS // 2
             n_writers = N_THREADS - n_readers
@@ -275,13 +239,12 @@ def run_read_committed_test(driver, target_ids: list[int]) -> dict:
             for f in concurrent.futures.as_completed(writer_futures):
                 write_results.append(f.result())
 
-        # Raccolta latenze e verifica Dirty Read
+        # Raccoglie risultati e verifica
         for r in read_results:
             read_latencies_all.extend(r["latencies"])
             total_reads += len(r["values_read"])
             for v in r["values_read"]:
-                # Un Dirty Read si verifica se il reader vede DIRTY_VALUE
-                # (42), che non è mai stato committato
+                # Verifica dirty read
                 if v == DIRTY_VALUE:
                     dirty_reads_detected += 1
 
@@ -296,8 +259,7 @@ def run_read_committed_test(driver, target_ids: list[int]) -> dict:
           f"{'✅ Nessuno (corretto)' if dirty_reads_detected == 0 else '❌ ANOMALIA!'}")
     print_stats("Latenza Lettura", read_stats)
     print_stats("Latenza Scrittura (tx esplicita, include sleep)", write_stats)
-    # Stima latenza netta (escluso sleep deliberato).
-    # Il sleep è uniform(50ms, 100ms) → media 75ms.
+    # Stima latenza netta
     _sleep_mean_ms = (SLEEP_DIRTY_WINDOW_MS_MIN + SLEEP_DIRTY_WINDOW_MS_MAX) / 2
     net_write_mean = max(0, write_stats.get('mean_ms', 0) - _sleep_mean_ms)
     print(f"  Latenza scrittura NETTA (escluso sleep medio {_sleep_mean_ms:.0f}ms): "
@@ -321,18 +283,13 @@ def run_read_committed_test(driver, target_ids: list[int]) -> dict:
     return results
 
 
-# TEST 2.2 - LOST UPDATE (Race Condition)
+# TEST 2.2 - Lost update
 
-# ---------- Strategia NON ATOMICA (vulnerabile) ----------
+# Strategia non atomica
 
 def lost_update_non_atomic(driver, target_id: int, increment: int, barrier: threading.Barrier) -> dict:
-    """
-    Thread che esegue un incremento NON atomico:
-      1. READ: legge notification_count
-      2. Pausa artificiale (simula processing)
-      3. WRITE: scrive old_value + increment  ← Lost Update possibile qui
-    """
-    barrier.wait()   # sincronizza tutti i thread prima di partire
+    """Esegue un incremento non atomico."""
+    barrier.wait()
 
     try:
         with driver.session() as s:
@@ -344,10 +301,10 @@ def lost_update_non_atomic(driver, target_id: int, increment: int, barrier: thre
             rec = res.single()
             old_val = rec["val"] if rec else 0
 
-            # Pausa deliberata per aumentare la probabilità di overlap
+            # Pausa intenzionale
             time.sleep(random.uniform(0.005, 0.020))
 
-            # WRITE (con valore stale)
+            # Esegue scrittura
             s.run(
                 "MATCH (p:Person {id: $pid}) SET p.notification_count = $val",
                 pid=target_id, val=old_val + increment
@@ -357,15 +314,10 @@ def lost_update_non_atomic(driver, target_id: int, increment: int, barrier: thre
         return {"success": False, "error": str(e)}
 
 
-# ---------- Strategia ATOMICA (robusta) ----------
+# Strategia atomica
 
 def lost_update_atomic(driver, target_id: int, increment: int, barrier: threading.Barrier) -> dict:
-    """
-    Thread che esegue un incremento ATOMICO con lock esclusivo automatico:
-      SET p.notification_count = p.notification_count + increment
-    Il compilatore Cypher rileva la dipendenza e acquisisce un X-lock prima
-    della lettura, garantendo la correttezza.
-    """
+    """Esegue un incremento atomico."""
     barrier.wait()
 
     try:
@@ -387,11 +339,11 @@ def run_lost_update_test(driver, target_ids: list[int]) -> dict:
     target_id  = target_ids[1] if len(target_ids) > 1 else target_ids[0]
     n_threads  = LOST_UPDATE_THREADS
     increment  = 1
-    expected   = n_threads * increment   # valore corretto se non ci sono lost update
+    expected   = n_threads * increment
 
     sub_banner(f"Lost Update – target Person ID: {target_id} | {n_threads} thread | incremento={increment}")
 
-    # ---- Fase A: Strategia NON ATOMICA ----
+    # Esegue test non atomico
     sub_banner("2.2a – Strategia NON ATOMICA (alias separato: READ → SET)")
     reset_notification_count(driver, [target_id], value=0)
 
@@ -407,7 +359,7 @@ def run_lost_update_test(driver, target_ids: list[int]) -> dict:
             ]
             concurrent.futures.wait(futures)
 
-        # Leggi il valore finale
+        # Legge il valore finale
         with driver.session() as s:
             res = s.run(
                 "MATCH (p:Person {id: $pid}) RETURN p.notification_count AS val",
@@ -431,7 +383,7 @@ def run_lost_update_test(driver, target_ids: list[int]) -> dict:
     print(f"  [Non Atomica] Trial con almeno 1 lost update: "
           f"{non_atomic_summary['trials_with_loss']}/{N_RUNS}")
 
-    # ---- Fase B: Strategia ATOMICA ----
+    # Esegue test atomico
     sub_banner("2.2b – Strategia ATOMICA (SET p.prop = p.prop + N in unico costrutto)")
     reset_notification_count(driver, [target_id], value=0)
 
@@ -480,24 +432,15 @@ def run_lost_update_test(driver, target_ids: list[int]) -> dict:
     return results
 
 
-# TEST 2.3 - DEADLOCK (Wait-for Graph)
+# TEST 2.3 - Deadlock (Wait-for Graph)
 
 def deadlock_thread_v2(driver, first_id: int, second_id: int,
                        my_ready: threading.Event, other_ready: threading.Event,
                        result_out: list, idx: int):
-    """
-    Approccio canonico con handshake a due eventi:
-      1. Acquisisce X-lock su `first_id` in una tx esplicita aperta
-      2. Segnala `my_ready` (il lock è tenuto aperto nella tx non committata)
-      3. Attende `other_ready` (l'altro thread ha il suo lock)
-      4. Tenta di acquisire `second_id` → deadlock circolare → TransientError
-
-    L'approccio a coppia singola per run garantisce che il ciclo si formi
-    tra esattamente due transazioni aperte, rendendo il deadlock deterministico.
-    """
+    """Thread per la generazione di attesa circolare."""
     t_start = time.perf_counter()
     outcome = {"thread_idx": idx, "deadlock_detected": False,
-               "detection_time_ms": None,   # tempo dal secondo lock request alla TransientError
+               "detection_time_ms": None,
                "error_type": None,
                "rollback_ok": False}
 
@@ -505,26 +448,24 @@ def deadlock_thread_v2(driver, first_id: int, second_id: int,
     with driver.session() as s:
         tx = s.begin_transaction()
         try:
-            # Passo 1 – LOCK su first_id (tenuto aperto nella tx)
+            # Acquisisce lock su first_id
             tx.run(
                 "MATCH (p:Person {id: $pid}) "
                 "SET p.notification_count = p.notification_count + 1",
                 pid=first_id
             ).consume()
 
-            # Passo 2 – Segnalo che il mio lock è acquisito
+            # Segnala acquisizione
             my_ready.set()
 
-            # Passo 3 – Aspetto che l'altro thread abbia il suo lock
+            # Attende l'altro thread
             if not other_ready.wait(timeout=5):
                 raise TimeoutError("Timeout waiting for other thread's lock")
 
-            # Piccola pausa per assicurare che entrambe le tx siano in attesa
+            # Attende le transazioni
             time.sleep(random.uniform(0.05, 0.15))
 
-            # Passo 4 – LOCK su second_id → circolo → deadlock
-            # t_lock2_start misura SOLO il tempo del Wait-for Graph,
-            # escludendo il sleep artificiale precedente
+            # Tenta acquisizione lock su second_id
             t_lock2_start = time.perf_counter()
             tx.run(
                 "MATCH (p:Person {id: $pid}) "
@@ -537,11 +478,11 @@ def deadlock_thread_v2(driver, first_id: int, second_id: int,
         except neo4j_exc.TransientError as e:
             t_detected = time.perf_counter()
             outcome["deadlock_detected"]   = True
-            # detection_time_ms = tempo dal secondo lock request alla TransientError
+            # Calcola tempo di detection
             if t_lock2_start is not None:
                 outcome["detection_time_ms"] = round((t_detected - t_lock2_start) * 1000.0, 3)
             else:
-                outcome["detection_time_ms"] = -1  # lock2 mai raggiunto
+                outcome["detection_time_ms"] = -1
             outcome["error_type"]          = type(e).__name__
             outcome["rollback_ok"]         = True
             outcome["message"]             = str(e)[:200]
@@ -557,7 +498,7 @@ def deadlock_thread_v2(driver, first_id: int, second_id: int,
             except Exception:
                 pass
         finally:
-            # Sblocca sempre l'altro thread in caso di errore prematuro
+            # Sblocca l'altro thread
             my_ready.set()
 
     result_out[idx] = outcome
@@ -583,18 +524,18 @@ def run_deadlock_test(driver, target_ids: list[int]) -> dict:
     for run_idx in range(N_RUNS):
         reset_notification_count(driver, [node_a, node_b], value=0)
 
-        # Due eventi per il handshake: ciascun thread segnala quando ha il lock
+        # Inizializza eventi
         ready_a = threading.Event()
         ready_b = threading.Event()
         result_out = [None, None]
 
-        # Thread A: acquisisce nodeA poi cerca nodeB
+        # Avvia thread A
         t_a = threading.Thread(
             target=deadlock_thread_v2,
             args=(driver, node_a, node_b, ready_a, ready_b, result_out, 0),
             daemon=True
         )
-        # Thread B: acquisisce nodeB poi cerca nodeA → ciclo garantito
+        # Avvia thread B
         t_b = threading.Thread(
             target=deadlock_thread_v2,
             args=(driver, node_b, node_a, ready_b, ready_a, result_out, 1),
@@ -640,7 +581,7 @@ def run_deadlock_test(driver, target_ids: list[int]) -> dict:
     return results
 
 
-# TEST 2.4 - NON-REPEATABLE READ
+# TEST 2.4 - Non-repeatable read
 
 def nrr_reader_vulnerable(driver, target_id, barrier, results_list, idx):
     barrier.wait()
@@ -710,7 +651,7 @@ def run_non_repeatable_read_test(driver, target_ids) -> dict:
     
     return {"non_repeatable_read": {"vulnerable": res_vuln, "protected": res_prot}}
 
-# TEST 2.5 - PHANTOM READ
+# TEST 2.5 - Phantom read
 
 def pr_reader_vulnerable(driver, target_id, barrier, results_list, idx):
     barrier.wait()
@@ -789,11 +730,9 @@ def run_phantom_read_test(driver, target_ids) -> dict:
     return {"phantom_read": {"vulnerable": res_vuln, "protected": res_prot}}
 
 
-# ===========================================================================
-# MAIN
-# ESECUZIONE PRINCIPALE
+# Main
 def main():
-    # Connessione preliminare per rilevare SF prima di stampare l'header
+    # Verifica connessione
     try:
         driver = get_neo4j_driver()
         driver.verify_connectivity()
@@ -801,7 +740,7 @@ def main():
         print(f"  [ERR] Neo4j: {e}")
         sys.exit(1)
 
-    # Conta i Person e rileva il Scale Factor
+    # Conta i Person e rileva lo Scale Factor
     with driver.session() as _s:
         _n_persons_total = _s.run("MATCH (p:Person) RETURN count(p) AS n").single()["n"]
     if _n_persons_total < 2_000:

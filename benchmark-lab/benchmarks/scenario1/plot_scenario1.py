@@ -26,9 +26,7 @@ except ImportError:
     import numpy as np
 
 
-# ---------------------------------------------------------------------------
-# Stile comune dark-mode
-# ---------------------------------------------------------------------------
+# Stile dark-mode
 STYLE = {
     "figure.facecolor":  "#ffffff",
     "axes.facecolor":    "#ffffff",
@@ -90,7 +88,7 @@ def plot_multihop(results: dict, out_dir: str):
             elinewidth=1.5, ecolor="#555555", zorder=4
         )
 
-        # Annotazioni speedup sui punti 3 e 4 hop
+        # Annota lo speedup
         for h_idx, h in enumerate([3, 4]):
             nd = mh.get(f"hop_{h}", {})
             sp = nd.get("speedup_neo4j_vs_pg")
@@ -144,7 +142,7 @@ def plot_multihop_speedup(results: dict, out_dir: str):
             alpha=0.85, edgecolor="#333333", width=0.55, zorder=3
         )
 
-        # Linea di parità (speedup = 1)
+        # Disegna linea di parità
         ax.axhline(y=1, color="#333333", linewidth=1.2, linestyle="--",
                    label="Parità (1×)", zorder=2)
 
@@ -265,7 +263,7 @@ def plot_shortest_path(results: dict, out_dir: str):
         print("[SKIP] Dati test_1_3_shortest_path non disponibili.")
         return
 
-    # Ordina per hop effettivi
+    # Ordina i risultati per hop
     items = sorted(sp.items(), key=lambda x: x[1].get("actual_hops", 0))
 
     labels, neo4j_m, neo4j_e, pg_m, pg_e, pg_timeout = [], [], [], [], [], []
@@ -289,7 +287,7 @@ def plot_shortest_path(results: dict, out_dir: str):
     with plt.rc_context(STYLE):
         fig, ax = plt.subplots(figsize=(10, 6))
 
-        # Neo4j bars (always valid)
+        # Barre Neo4j
         bars1 = ax.bar(x - width / 2, neo4j_m, width,
                        label="Neo4j (BFS nativo)", color=COLOR_NEO4J,
                        alpha=0.85, edgecolor="#333333", zorder=3)
@@ -297,12 +295,12 @@ def plot_shortest_path(results: dict, out_dir: str):
                     fmt="none", color="#333333", capsize=5, capthick=1.5,
                     linewidth=1.2, zorder=5)
 
-        # PostgreSQL bars (con timeout handling)
+        # Barre PostgreSQL
         pg_valid_m = [m if m is not None else 0 for m in pg_m]
         bars2 = ax.bar(x + width / 2, pg_valid_m, width,
                        label="PostgreSQL (CTE ricorsiva)", color=COLOR_PG,
                        alpha=0.85, edgecolor="#333333", zorder=3)
-        # Error bars solo dove non timeout
+        # Barre di errore
         for i, (xi, m, e, to) in enumerate(zip(x, pg_m, pg_e, pg_timeout)):
             if not to and m is not None:
                 ax.errorbar(xi + width / 2, m, yerr=e,
@@ -314,7 +312,7 @@ def plot_shortest_path(results: dict, out_dir: str):
                         fontsize=8, color="#e74c3c", fontweight="bold",
                         rotation=90)
 
-        # Annotazioni valori Neo4j
+        # Annota valori Neo4j
         for bar, m in zip(bars1, neo4j_m):
             ax.text(bar.get_x() + bar.get_width() / 2,
                     m + max(neo4j_m) * 0.02,

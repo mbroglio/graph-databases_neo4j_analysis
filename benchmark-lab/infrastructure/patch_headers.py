@@ -9,7 +9,7 @@ def process_entity(entity_type, is_edge):
     if not files:
         return
     
-    # Lettura header dal primo file non vuoto
+    # Legge header originale
     first_line = ""
     for f_path in files:
         with open(f_path, 'r') as f:
@@ -24,7 +24,7 @@ def process_entity(entity_type, is_edge):
         
     header = first_line.split('|')
     
-    # Verifica se già patchato
+    # Verifica stato patch
     is_header = not first_line[0].isdigit()
     
     if not is_header:

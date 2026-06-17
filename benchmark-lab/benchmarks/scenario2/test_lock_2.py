@@ -19,7 +19,7 @@ def writer():
     with driver.session() as s:
         s.run("MATCH (p:Person {id: 1}) CREATE (p)-[:KNOWS]->(:Person {id: -999, _phantom_: true})")
     print(f"Writer: Done in {time.time()-t0:.2f}s")
-    # cleanup
+    # pulizia
     with driver.session() as s:
         s.run("MATCH (p:Person {id: -999}) DETACH DELETE p")
 

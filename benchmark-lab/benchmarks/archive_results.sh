@@ -1,9 +1,6 @@
 #!/bin/bash
-# Script di archiviazione dei risultati (nella directory relativa allo Scale Factor corrente)
-# per prevenire la sovrascrittura dei file JSON generati dalle esecuzioni sequenziali.
-#
-# Utilizzo: ./archive_results.sh <cartella_scenario>
-#
+#archiviazione dei risultati (nella directory relativa allo Scale Factor corrente)
+
 # Rilevamento automatico dello Scale Factor (SF):
 #   - Conteggio dei nodi Person sull'istanza neo4j-benchmark (nodo singolo)
 #   - In caso di fallimento (es. test cluster, scenario 3), viene interrogato il nodo neo4j-core1
@@ -15,7 +12,7 @@ if [ -z "$SCENARIO" ]; then
     exit 1
 fi
 
-# Determinazione dello Scale Factor (SF0.1 o SF1) basata sul numero di nodi (priorità a istanza singola)
+# Rileva SF
 COUNT=""
 if docker inspect neo4j-benchmark > /dev/null 2>&1; then
     COUNT=$(docker exec neo4j-benchmark cypher-shell -u neo4j -p password \
@@ -24,7 +21,7 @@ if docker inspect neo4j-benchmark > /dev/null 2>&1; then
 fi
 
 if [ -z "$COUNT" ] || [ "$COUNT" = "0" ]; then
-    # Istanza singola non disponibile. Rilevamento tramite nodo 1 del cluster (scenario 3)
+    # Rileva nodo cluster
     COUNT=$(docker exec neo4j-core1 cypher-shell -u neo4j -p password \
         "MATCH (p:Person) RETURN count(p);" 2>/dev/null \
         | grep -E '^[0-9]+$' | head -1)

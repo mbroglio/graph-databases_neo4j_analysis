@@ -25,18 +25,14 @@ set -e
 # Posizionati sempre nella root del progetto (benchmark-lab)
 cd "$(dirname "$0")/../../"
 
-# ---------------------------------------------------------------------------
 # Colori
-# ---------------------------------------------------------------------------
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# ---------------------------------------------------------------------------
 # Argomenti
-# ---------------------------------------------------------------------------
 SKIP_PLOTS=false
 for arg in "$@"; do
     case $arg in
@@ -44,9 +40,7 @@ for arg in "$@"; do
     esac
 done
 
-# ---------------------------------------------------------------------------
 # Banner
-# ---------------------------------------------------------------------------
 echo -e "${GREEN}======================================================================"
 echo -e "  SCENARIO 4 – I Punti Deboli (Limiti prestazionali di Neo4j)"
 echo -e "======================================================================${NC}"
@@ -55,9 +49,7 @@ echo -e "  Test 4.2 – Inserimento Massivo di Dati Disconnessi (Bulk Insert)"
 echo -e "  Test 4.3 – Esplosione Combinatoria nei Cammini Non Filtrati"
 echo -e "${GREEN}======================================================================${NC}\n"
 
-# ---------------------------------------------------------------------------
-# [1/3] Verifica container attivi
-# ---------------------------------------------------------------------------
+# Verifica container
 echo -e "${YELLOW}[1/3] Verifica disponibilità dei database...${NC}"
 
 NEO4J_CONTAINER="neo4j-benchmark"
@@ -77,7 +69,7 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${POSTGRES_CONTAINER}$"; then
 fi
 echo -e "  ${GREEN}[OK]${NC} PostgreSQL → container '${POSTGRES_CONTAINER}' attivo"
 
-# Attesa che Neo4j sia pronto a rispondere (bolt)
+# Attesa che Neo4j sia pronto
 echo -e "\n  Attesa che Neo4j sia pronto..."
 MAX_RETRIES=20
 RETRY_COUNT=0
@@ -92,7 +84,7 @@ until docker exec "${NEO4J_CONTAINER}" cypher-shell -u neo4j -p password "RETURN
 done
 echo -e "\n  ${GREEN}[OK]${NC} Neo4j risponde e accetta connessioni Bolt"
 
-# Verifica minima dataset (almeno qualche nodo Person)
+# Verifica dataset
 PERSON_COUNT=$(docker exec "${NEO4J_CONTAINER}" \
     cypher-shell -u neo4j -p password "MATCH (p:Person) RETURN count(p) AS n" \
     --format plain 2>/dev/null | tail -1)
@@ -105,9 +97,7 @@ if [ -z "$PERSON_COUNT" ] || [ "$PERSON_COUNT" -eq 0 ] 2>/dev/null; then
 fi
 echo -e "  ${GREEN}[OK]${NC} Dataset Neo4j: ${PERSON_COUNT} nodi Person trovati"
 
-# ---------------------------------------------------------------------------
-# [2/3] Esecuzione benchmark
-# ---------------------------------------------------------------------------
+# Esegue benchmark
 echo -e "\n${YELLOW}[2/3] Avvio benchmark Scenario 4...${NC}"
 echo -e "  ${CYAN}Output testuale: benchmarks/scenario4/benchmark_output.txt${NC}\n"
 
@@ -125,9 +115,7 @@ fi
 
 echo -e "\n${GREEN}[OK] Benchmark completato. Risultati in: benchmarks/scenario4/results.json${NC}"
 
-# ---------------------------------------------------------------------------
-# [3/3] Generazione grafici
-# ---------------------------------------------------------------------------
+# Genera grafici
 if [ "$SKIP_PLOTS" = true ]; then
     echo -e "\n${YELLOW}[3/3] Generazione grafici saltata (--skip-plots).${NC}"
 else
@@ -145,9 +133,7 @@ else
     fi
 fi
 
-# ---------------------------------------------------------------------------
 # Riepilogo finale
-# ---------------------------------------------------------------------------
 echo -e "\n${GREEN}======================================================================"
 echo -e "  SCENARIO 4 COMPLETATO"
 echo -e "======================================================================${NC}"
