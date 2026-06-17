@@ -3,12 +3,11 @@
 # ==============================================================================
 # Script di Automazione - Scenario 3 (Sistemi Distribuiti e Teorema CAP)
 # ==============================================================================
-# Questo script automatizza l'intera esecuzione dello Scenario 3:
 # 1. Pulizia ambiente e avvio del cluster Neo4j Enterprise (5 nodi)
 # 2. Attesa formazione quorum Raft
 # 3. Caricamento dataset LDBC (Person e KNOWS)
 # 4. Esecuzione benchmark Python (Test 3.1, 3.2, 3.3)
-# 5. Generazione grafici SVG
+# 5. Generazione grafici
 # ==============================================================================
 
 set -e # Interrompe lo script in caso di errore

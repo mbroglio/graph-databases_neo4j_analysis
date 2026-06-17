@@ -3,10 +3,9 @@
 # ==============================================================================
 # Script di Automazione - Scenario 4 (I Punti Deboli di Neo4j)
 # ==============================================================================
-# Questo script automatizza l'intera esecuzione dello Scenario 4:
 #   1. Verifica che i container Neo4j e PostgreSQL standalone siano attivi
 #   2. Esecuzione del benchmark Python (Test 4.1, 4.2, 4.3)
-#   3. Generazione dei grafici SVG (4.1 e 4.2)
+#   3. Generazione dei grafici (4.1 e 4.2)
 #
 # Prerequisiti:
 #   - docker compose up -d  (docker-compose.yml con neo4j-benchmark e postgres)
